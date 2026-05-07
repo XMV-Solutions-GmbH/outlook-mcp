@@ -1,0 +1,29 @@
+# Claude Code per-machine settings (bypass permissions etc.)
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local secrets / token caches (should never land in OSS repo)
+.env
+.env.local
+*.pem
+secrets/
+
+# Coverage artefacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
