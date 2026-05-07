@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Markdownlint configuration
+# See: https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+
+# Disable line length rule - impractical for documentation with URLs
+MD013: false
+
+# Allow first heading to not be h1 (for templates with frontmatter)
+MD041: false
+
+# Disable table column style rule - we prefer aligned tables for readability
+MD060: false

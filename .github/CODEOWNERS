@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Default owners for everything
+* @XMV-Solutions-GmbH/open-source
+
+# Documentation can have different reviewers
+# /docs/ @XMV-Solutions-GmbH/docs-team
