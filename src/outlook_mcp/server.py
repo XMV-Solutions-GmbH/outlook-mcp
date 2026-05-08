@@ -32,6 +32,7 @@ from mcp.types import ToolAnnotations
 
 from outlook_mcp.tools.calendar_list_events import list_events as _do_calendar_list_events
 from outlook_mcp.tools.calendar_search import search as _do_calendar_search
+from outlook_mcp.tools.email_create_draft import create_draft as _do_email_create_draft
 from outlook_mcp.tools.email_list_unread import list_unread as _do_email_list_unread
 from outlook_mcp.tools.email_read import read_email as _do_email_read
 from outlook_mcp.tools.email_search import search as _do_email_search
@@ -229,17 +230,73 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
         return _do_status(profile=_get_profile())
 
 
+def register_write_tools(mcp_instance: FastMCP) -> None:
+    """Register the gated draft-creating tools on `mcp_instance`.
+
+    Only invoked when `OUTLOOK_ALLOW_DRAFTS` is truthy. The functions
+    themselves are real implementations; the gating is purely about
+    whether the agent is offered them at tools/list time.
+
+    None of these tools sends mail or sends a calendar invitation.
+    `Mail.Send` is not a permission this server ever requests.
+    """
+
+    @mcp_instance.tool(
+        annotations=ToolAnnotations(
+            title="Create Outlook Email Draft",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=False,
+            openWorldHint=False,
+        ),
+        description=(
+            "Create a new mail draft in the user's Drafts folder. The "
+            "draft is NOT sent — the human reviews it in Outlook and "
+            "clicks Send manually. Returns {draft_id, web_url}. "
+            "Body input: pass `body` (Markdown, rendered to HTML "
+            "server-side via a safe-mode renderer that strips "
+            "javascript: links and inline HTML) OR `body_html` (raw "
+            "HTML used as-is). The two are mutually exclusive. "
+            "Recipients: `to` is required (non-empty list of email "
+            "addresses); `cc` and `bcc` are optional. The draft is "
+            "tracked in this profile's draft registry — visible via "
+            "ol_status."
+        ),
+    )
+    def ol_email_create_draft(
+        to: list[str],
+        subject: str,
+        body: str | None = None,
+        body_html: str | None = None,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return _do_email_create_draft(
+            to=to,
+            subject=subject,
+            body=body,
+            body_html=body_html,
+            cc=cc,
+            bcc=bcc,
+            profile=_get_profile(),
+        )
+
+
 def _build_server() -> FastMCP:
     """Build and return a FastMCP server with the right tools registered."""
     server = FastMCP("mcp-server-outlook")
     register_read_tools(server)
     if drafts_enabled():
-        # v0.2 will register draft tools here. For now, just log so
-        # users running with the env var see what's up while v0.1 is
-        # the published version.
+        register_write_tools(server)
+    else:
+        # One-line note on stderr so users running uvx interactively
+        # see why drafts are absent. Quiet by default to avoid noise
+        # in MCP-client-launched contexts (Claude Code captures
+        # stderr but doesn't surface it loudly).
         logging.getLogger("outlook-mcp").info(
-            "OUTLOOK_ALLOW_DRAFTS is set, but draft tools are not yet implemented "
-            "(deferred to v0.2). Read tools remain available.",
+            "OUTLOOK_ALLOW_DRAFTS not set — read-only mode "
+            "(ol_email_create_draft etc. not registered). "
+            "Set OUTLOOK_ALLOW_DRAFTS=true to enable drafts.",
         )
     return server
 

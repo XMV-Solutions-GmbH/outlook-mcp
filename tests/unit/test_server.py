@@ -21,6 +21,7 @@ from mcp.server.fastmcp import FastMCP
 from outlook_mcp.server import (
     drafts_enabled,
     register_read_tools,
+    register_write_tools,
 )
 
 
@@ -106,15 +107,71 @@ def test_module_level_server_includes_read_tools_when_drafts_unset(
     assert "ol_status" in names
 
 
-def test_module_level_server_with_drafts_set_still_only_has_read_tools_in_v01(
+def test_module_level_server_with_drafts_set_registers_write_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """v0.1 has no draft tools yet — flag is parsed but registers nothing extra."""
+    """OUTLOOK_ALLOW_DRAFTS=true causes the gated draft tools to register
+    alongside the read tools."""
     monkeypatch.setenv("OUTLOOK_ALLOW_DRAFTS", "true")
     from outlook_mcp.server import _build_server
 
     server = _build_server()
     names = _list_tool_names(server)
-    # No `ol_email_create_draft` etc. exist in v0.1
-    assert "ol_email_create_draft" not in names
+    assert "ol_email_create_draft" in names
+    # Read tools still there
     assert "ol_email_search" in names
+
+
+def test_module_level_server_with_drafts_unset_omits_write_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default (read-only) mode: draft tools are NOT visible."""
+    monkeypatch.delenv("OUTLOOK_ALLOW_DRAFTS", raising=False)
+    from outlook_mcp.server import _build_server
+
+    server = _build_server()
+    names = _list_tool_names(server)
+    assert "ol_email_create_draft" not in names
+
+
+# ---------------------------------------------------------------------
+# register_write_tools — annotations + tool surface
+# ---------------------------------------------------------------------
+
+
+def test_register_write_tools_adds_email_create_draft() -> None:
+    server = FastMCP("test-with-drafts")
+    register_write_tools(server)
+    names = _list_tool_names(server)
+    assert "ol_email_create_draft" in names
+
+
+def test_create_draft_tool_is_not_readonly_not_destructive() -> None:
+    """Creating a draft mutates the user's mailbox state (a draft
+    appears in their Drafts folder), so readOnlyHint=False. It is
+    NOT destructive — drafts don't overwrite or delete anything,
+    they just append. The annotation pair lets Claude Code's
+    permission prompt render the right messaging."""
+    server = FastMCP("test-with-drafts")
+    register_write_tools(server)
+    [draft_tool] = [
+        t for t in asyncio.run(server.list_tools()) if t.name == "ol_email_create_draft"
+    ]
+    assert draft_tool.annotations is not None
+    assert draft_tool.annotations.readOnlyHint is False
+    assert draft_tool.annotations.destructiveHint is False
+
+
+def test_no_send_tool_exists_anywhere() -> None:
+    """The defining design constraint of this server: NO send_* tool
+    is ever registered, even with OUTLOOK_ALLOW_DRAFTS=true. If this
+    test ever fails, someone violated the never-auto-send rule."""
+    server = FastMCP("test-with-drafts")
+    register_read_tools(server)
+    register_write_tools(server)
+    names = _list_tool_names(server)
+    for name in names:
+        assert "send" not in name.lower(), (
+            f"Tool {name!r} contains 'send' — the never-auto-send rule "
+            f"forbids any send_* tool, ever."
+        )
