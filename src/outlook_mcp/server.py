@@ -27,7 +27,7 @@ import os
 import sys
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
 from outlook_mcp.auth.flow import send_enabled
@@ -47,6 +47,7 @@ from outlook_mcp.tools.email_read import read_email as _do_email_read
 from outlook_mcp.tools.email_search import search as _do_email_search
 from outlook_mcp.tools.email_send_draft import send_draft as _do_email_send_draft
 from outlook_mcp.tools.email_update_draft import update_draft as _do_email_update_draft
+from outlook_mcp.tools.login_begin import login_begin as _do_login_begin
 from outlook_mcp.tools.login_status import login_status as _do_login_status
 from outlook_mcp.tools.status import status as _do_status
 
@@ -299,6 +300,49 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
     )
     def ol_login_status() -> dict[str, Any]:
         return _do_login_status(profile=_get_profile())
+
+    @mcp_instance.tool(
+        annotations=ToolAnnotations(
+            title="Outlook Login Begin",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+        description=(
+            "Drive the OAuth Device Code flow as an MCP tool. "
+            "Surfaces `user_code` + `verification_url` to the agent "
+            "(and via the agent to the user) and polls Microsoft "
+            "Identity in the background until the user completes "
+            "sign-in OR the device code expires (~15 min cap). "
+            "Idempotent: a non-expired pending session for the "
+            "profile is returned as-is unless `force=True`. "
+            "`force=True` cancels the in-flight session and starts a "
+            "fresh flow. On the way, the tool streams progress "
+            "notifications (time-remaining countdown) when the MCP "
+            "client advertises the progress capability — bonus "
+            "channel; clients without skip silently. Returns the "
+            "session's public view: `session_id`, `user_code`, "
+            "`verification_url`, `verification_url_complete`, "
+            "`expires_at`, `time_remaining_s`, `status`, "
+            "`signed_in_user_upn`, `error`. "
+            "When relaying the response to the user, render "
+            "`user_code` FIRST in its own code block (no labels, no "
+            "whitespace) and `verification_url` SECOND as a plain "
+            "auto-link (not in a code block). The user copies the "
+            "code first, then clicks the link, and pastes into the "
+            "page that opens — minimises app-switching on mobile."
+        ),
+    )
+    async def ol_login_begin(
+        force: bool = False,
+        ctx: Context[Any, Any] | None = None,
+    ) -> dict[str, Any]:
+        return await _do_login_begin(
+            profile=_get_profile(),
+            force=force,
+            ctx=ctx,
+        )
 
 
 def register_write_tools(mcp_instance: FastMCP) -> None:
