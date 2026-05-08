@@ -145,14 +145,16 @@ In v0.2, draft tools become available so the agent can write the reply email or 
 - **Token storage** is auto-detected at first use: OS keyring (macOS Keychain / Windows Credential Locker / Linux Secret Service) when available, mode-0600 plain JSON file as fallback (same convention as `gh auth`, `aws configure`). Optional encryption with `OUTLOOK_TOKEN_PASSPHRASE` for paranoid setups or CI.
 - **Multi-customer / multi-tenant**: separate `OUTLOOK_PROFILE` per tenant, each with its own token cache.
 
-#### Required Microsoft Graph scopes (delegated, v0.1)
+#### Required Microsoft Graph scopes (delegated)
 
 - `Mail.Read` — read inbox + folders
+- `Mail.ReadWrite` — create / update / discard drafts (v0.2). Does **not** include send permission — that's `Mail.Send`, intentionally absent.
 - `Calendars.Read` — read events
+- `Calendars.ReadWrite` — create / update / discard event drafts (v0.2)
 - `User.Read` — basic profile (signed-in user identification)
 - `offline_access` — refresh tokens
 
-In v0.2 (drafts), `Mail.ReadWrite` and `Calendars.ReadWrite` are added. **`Mail.Send` is never requested**, ever — sends remain a human action in Outlook.
+**`Mail.Send` is never requested**, ever — sends remain a human action in Outlook.
 
 #### Service-principal mode (unattended automation)
 
