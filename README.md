@@ -72,6 +72,8 @@ Waiting for sign-in...
 
 Open the URL in any browser, type the code, sign in with your M365 account. Your refresh token is cached locally — see [Token storage](#token-storage). The MCP server itself never blocks for human interaction afterwards.
 
+> Prefer to log in **inside the MCP client** without leaving your agent's chat? Use the [Login from an MCP client](#login-from-an-mcp-client) flow below — same end result, no separate terminal needed.
+
 ### 2. Wire it into Claude Code
 
 In your project's `.mcp.json`:
@@ -189,6 +191,45 @@ If you're unsure whether you want this, leave the flag out. The default drafts-o
 For CI / scheduled jobs where no human is in the loop, run with `OUTLOOK_AUTH_MODE=service-principal` (or just set `OUTLOOK_CLIENT_SECRET` — auto-detected). Required env vars: `OUTLOOK_CLIENT_ID`, `OUTLOOK_CLIENT_SECRET`, `OUTLOOK_TENANT_ID`. The app registration must have **Application** Microsoft Graph permissions with admin consent recorded.
 
 Tradeoff: every action is attributed to the *application* principal, NOT a real user. The compliance-friendly default stays delegated user auth — only switch when no human is in the loop.
+
+### Login from an MCP client
+
+Two MCP tools — `ol_login_begin` and `ol_login_status` — let an agent drive the OAuth Device Code flow without leaving the chat. This is the recommended path for any client where shelling out to a terminal is awkward (web UIs, mobile, locked-down sandboxes). The CLI `mcp-server-outlook login` path stays — same token cache, fully interoperable. Use whichever fits the moment.
+
+**The two tools:**
+
+| Tool | What it does |
+|---|---|
+| `ol_login_begin(force=False)` | Initiates the Device Code flow, returns `user_code` + `verification_url`, polls Microsoft Identity in the background, blocks until terminal (success / expired / failed). Streams progress notifications during the wait when the client supports them. Idempotent: a non-expired pending session for the profile is joined, not duplicated. `force=True` cancels any in-flight session and starts fresh. |
+| `ol_login_status()` | Returns one of three states: `signed_in` (a usable token exists for this profile, regardless of how it got there — CLI login hours ago, tool login just now), `pending` (a Device Code flow is in flight; response carries `user_code` + `verification_url` so the agent can re-display the prompt), or `none` (no token, no flow — call `ol_login_begin`). Read-only. |
+
+**Crucial property of `ol_login_status`:** it actively probes the token store. A user who logged in via the CLI three days ago shows as `signed_in`, NOT `none`. The two paths don't fight; they cooperate via the shared token cache.
+
+**Typical flow as the agent sees it:**
+
+```text
+You:    Help me triage my unread mail.
+Agent:  [ol_login_status() → "none"]
+        I need to sign in to your Microsoft 365 account first.
+        [ol_login_begin() → returns pending session]
+        ABCD-EFGH
+
+        https://login.microsoftonline.com/common/oauth2/deviceauth
+
+        Tap-and-hold the code to copy, then click the link.
+        I'm waiting…
+You:    [signs in in browser]
+Agent:  [ol_login_begin() returns success]
+        Signed in as anna@xmv.de.
+        [ol_email_list_unread() → ...]
+        You have 3 unread mails. The first is from …
+```
+
+**Pending sessions are in-process state.** If the MCP server restarts before the user completes the Device Code prompt (Claude Code session ends, container redeployed, …), the in-flight session is lost. The agent calls `ol_login_begin` again — the Microsoft side cleans up the abandoned device code automatically. Persisting pending sessions to disk is non-trivial (the asyncio polling task can't be serialised; resuming from a fresh process would need to start a new poll against the original device code) and is deferred to a later release. In practice this rarely matters — Device Code flows take 30–60 seconds when the user is active.
+
+**No `ol_logout` MCP tool.** Logout stays CLI-only (`mcp-server-outlook logout --profile <name>`). An agent proactively logging users out is a footgun — the kind of "agent decided to be helpful" surprise that causes incident reports. Human-initiated logout is the expected path.
+
+**File-lock caveat (rare).** If you run the CLI `mcp-server-outlook login --profile foo` *concurrently* with `ol_login_begin(profile="foo")` from a running MCP server, the two writes to the token cache file are not protected by a file lock at the library level. The result on collision is "last writer wins" — typically harmless because both paths produce a valid token, just one of them ends up on disk. If you care about strict correctness here, run only one of the two paths at a time.
 
 ### Safety model
 
