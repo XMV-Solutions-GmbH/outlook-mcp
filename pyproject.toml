@@ -40,6 +40,10 @@ dependencies = [
     "httpx>=0.28",
     "keyring>=25",
     "cryptography>=42",
+    # Markdown -> HTML for v0.2 draft bodies. Safe mode (escape=True)
+    # blocks raw HTML and dangerous URI schemes by default. See
+    # docs/spikes/2026-05-08-v02-drafts-spikes.md § 4.
+    "mistune>=3",
 ]
 
 [project.urls]
