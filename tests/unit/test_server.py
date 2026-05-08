@@ -161,6 +161,33 @@ def test_register_write_tools_adds_email_discard_draft() -> None:
     assert "ol_email_discard_draft" in names
 
 
+def test_register_write_tools_adds_calendar_create_event_draft() -> None:
+    server = FastMCP("test-with-drafts")
+    register_write_tools(server)
+    names = _list_tool_names(server)
+    assert "ol_calendar_create_event_draft" in names
+
+
+def test_register_write_tools_adds_calendar_discard_event_draft() -> None:
+    server = FastMCP("test-with-drafts")
+    register_write_tools(server)
+    names = _list_tool_names(server)
+    assert "ol_calendar_discard_event_draft" in names
+
+
+def test_calendar_create_event_draft_is_not_destructive() -> None:
+    """Creating a tentative event APPENDS to the calendar — same
+    semantic as creating an email draft. Not destructive."""
+    server = FastMCP("test-with-drafts")
+    register_write_tools(server)
+    [tool] = [
+        t for t in asyncio.run(server.list_tools()) if t.name == "ol_calendar_create_event_draft"
+    ]
+    assert tool.annotations is not None
+    assert tool.annotations.readOnlyHint is False
+    assert tool.annotations.destructiveHint is False
+
+
 def test_discard_draft_tool_is_destructive_and_idempotent() -> None:
     """DELETE on a draft removes it permanently — destructiveHint=True.
     Idempotent because re-deleting an already-gone draft is a no-op."""

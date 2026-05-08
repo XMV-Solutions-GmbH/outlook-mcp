@@ -30,6 +30,12 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from outlook_mcp.tools.calendar_create_event_draft import (
+    create_event_draft as _do_calendar_create_event_draft,
+)
+from outlook_mcp.tools.calendar_discard_event_draft import (
+    discard_event_draft as _do_calendar_discard_event_draft,
+)
 from outlook_mcp.tools.calendar_list_events import list_events as _do_calendar_list_events
 from outlook_mcp.tools.calendar_search import search as _do_calendar_search
 from outlook_mcp.tools.email_create_draft import create_draft as _do_email_create_draft
@@ -372,6 +378,72 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
     )
     def ol_email_discard_draft(draft_id: str) -> None:
         _do_email_discard_draft(draft_id, profile=_get_profile())
+
+    @mcp_instance.tool(
+        annotations=ToolAnnotations(
+            title="Create Outlook Calendar Event Draft",
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=False,
+            openWorldHint=False,
+        ),
+        description=(
+            "Create a tentative event on the user's calendar with "
+            "responseRequested=False (Microsoft Graph does NOT email "
+            "any invitations). The event lands as a tentative plan; "
+            "the human reviews it in Outlook and clicks Send "
+            "Invitation manually if attendees should be notified. "
+            "Returns {event_id, web_url, warnings}. `warnings` is a "
+            "list of overlap warnings — events already on the user's "
+            "calendar that intersect [start, end]. The draft is "
+            "created regardless of overlaps; the agent decides "
+            "whether to keep, edit, or roll back via "
+            "ol_calendar_discard_event_draft. Body input mirrors "
+            "ol_email_create_draft (Markdown via `body` or raw HTML "
+            "via `body_html`, mutually exclusive)."
+        ),
+    )
+    def ol_calendar_create_event_draft(
+        subject: str,
+        start: str,
+        end: str,
+        time_zone: str = "UTC",
+        attendees: list[str] | None = None,
+        body: str | None = None,
+        body_html: str | None = None,
+        location: str | None = None,
+    ) -> dict[str, Any]:
+        return _do_calendar_create_event_draft(
+            subject=subject,
+            start=start,
+            end=end,
+            time_zone=time_zone,
+            attendees=attendees,
+            body=body,
+            body_html=body_html,
+            location=location,
+            profile=_get_profile(),
+        )
+
+    @mcp_instance.tool(
+        annotations=ToolAnnotations(
+            title="Discard Outlook Calendar Event Draft",
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+        description=(
+            "Delete a calendar event this MCP profile created. "
+            "Refuses to delete events not in this profile's draft "
+            "registry — hand-created events in Outlook are off-limits. "
+            "Idempotent: re-deleting an event already gone "
+            "server-side is a silent no-op (the registry entry is "
+            "cleaned up either way). Returns no value on success."
+        ),
+    )
+    def ol_calendar_discard_event_draft(event_id: str) -> None:
+        _do_calendar_discard_event_draft(event_id, profile=_get_profile())
 
 
 def _build_server() -> FastMCP:
