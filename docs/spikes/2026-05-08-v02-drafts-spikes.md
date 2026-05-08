@@ -167,7 +167,7 @@ What body format does `ol_email_create_draft` accept, and what does it write to 
 | Markdown only | Agents write Markdown natively and well. | Requires server-side Markdown→HTML conversion; bug surface for the converter. |
 | **Markdown by default + HTML opt-in** | Agents have a comfortable default; power users can pass `body_html` directly when they need precise control (e.g. tables, embedded styles). | Two parameters mean two code paths to test. |
 
-### Decision: **Markdown by default + HTML opt-in.** Render server-side via `mistune` in safe mode.
+### Decision: **Markdown by default + HTML opt-in**, rendered server-side via `mistune` in safe mode
 
 ### Tool surface
 
