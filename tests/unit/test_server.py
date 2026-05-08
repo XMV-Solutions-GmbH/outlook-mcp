@@ -77,16 +77,39 @@ def test_register_read_tools_adds_all_read_tools() -> None:
         "ol_calendar_list_events",
         "ol_status",
         "ol_login_status",
+        "ol_login_begin",
     }
 
 
+def test_login_begin_tool_annotations() -> None:
+    """ol_login_begin mutates local state (writes a token to disk on
+    success) but does NOT mutate any mailbox state — readOnlyHint=False,
+    destructiveHint=False. Idempotent because re-calling while a
+    pending session exists returns the same session."""
+    server = FastMCP("test-read-only")
+    register_read_tools(server)
+    [login_begin_tool] = [t for t in asyncio.run(server.list_tools()) if t.name == "ol_login_begin"]
+    assert login_begin_tool.annotations is not None
+    assert login_begin_tool.annotations.readOnlyHint is False
+    assert login_begin_tool.annotations.destructiveHint is False
+    assert login_begin_tool.annotations.idempotentHint is True
+
+
 def test_read_tools_have_readonly_annotation() -> None:
-    """All read tools must have readOnlyHint=True so Claude Code's prompt is right."""
+    """All read tools must have readOnlyHint=True so Claude Code's prompt is right.
+
+    Exception: ol_login_begin writes to local disk on success (token
+    persistence) — readOnlyHint=False is correct for that one.
+    """
+    _readwrite_exceptions = {"ol_login_begin"}
+
     server = FastMCP("test-read-only")
     register_read_tools(server)
     tools = asyncio.run(server.list_tools())
     for tool in tools:
         assert tool.annotations is not None, f"{tool.name} missing annotations"
+        if tool.name in _readwrite_exceptions:
+            continue
         assert tool.annotations.readOnlyHint is True, (
             f"{tool.name} should be readOnlyHint=True; got {tool.annotations}"
         )
