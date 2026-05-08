@@ -612,6 +612,20 @@ wheels = [
 ]
 
 [[package]]
+name = "mcp-microsoft-graph-auth"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "httpx" },
+    { name = "keyring" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4e/53/3766371a74d217d1ef7ec3dbe95acf46b902c62c62ad3fa83c5a26d9f5d6/mcp_microsoft_graph_auth-0.1.1.tar.gz", hash = "sha256:7d41a67a9a8b70eba510505b86f4aaa24fed9df340a264a59a43e88a5b604d00", size = 98872, upload-time = "2026-05-08T18:55:38.83Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/98/db/220759a47967637309b740831b1bd713a86be504021d717e579e3d877993/mcp_microsoft_graph_auth-0.1.1-py3-none-any.whl", hash = "sha256:557dcb3cd9d8a0cde917049d67f159d084149fc6552efd3156a659b49956dad8", size = 23859, upload-time = "2026-05-08T18:55:37.386Z" },
+]
+
+[[package]]
 name = "mcp-server-outlook"
 version = "0.1.0"
 source = { editable = "." }
@@ -620,6 +634,7 @@ dependencies = [
     { name = "httpx" },
     { name = "keyring" },
     { name = "mcp" },
+    { name = "mcp-microsoft-graph-auth" },
     { name = "mistune" },
 ]
 
@@ -639,6 +654,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28" },
     { name = "keyring", specifier = ">=25" },
     { name = "mcp", specifier = ">=1.2" },
+    { name = "mcp-microsoft-graph-auth", specifier = ">=0.1.1" },
     { name = "mistune", specifier = ">=3" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },

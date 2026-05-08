@@ -3,128 +3,84 @@
 # SPDX-FileContributor: David Koller <david.koller@xmv.de>
 """Token persistence backends.
 
-Three implementations behind a `TokenStore` Protocol, in preference
-order:
+Thin shim over `mcp-microsoft-graph-auth`'s `token_store` module:
+the backend implementations live in the shared library, this module
+keeps Outlook-specific defaults (keyring service name, cache
+directory, env-var names) and the env-var-driven auto-pick logic in
+`get_token_store()`.
 
-- `KeyringTokenStore`: uses python-keyring, which delegates to the
-  active OS keyring (Secret Service / Keychain / Credential Locker).
-  Available when the OS provides one of those — this is what most
-  desktop installs (macOS, Windows, Linux with gnome-keyring) hit.
-- `PlainFileTokenStore`: JSON at `~/.cache/outlook-mcp/<profile>
-  /token.json` with mode 0600. Default fallback when keyring isn't
-  available. Same security model as `gh auth`, `aws configure`,
-  `npm login`, `~/.ssh/id_rsa`: trust the local user account.
-- `EncryptedFileTokenStore`: cryptography.fernet ciphertext on disk
-  with a Scrypt-derived key from `OUTLOOK_TOKEN_PASSPHRASE`. Opt-in
-  for CI (passphrase + ciphertext as separate secrets) or paranoid
-  users.
-
-Auto-detection: keyring (if real backend) → plain file (default
-fallback) → encrypted file (only if passphrase set). No env vars
-needed for the typical install. `OUTLOOK_TOKEN_STORE=keyring|file|
-encrypted-file` forces a specific backend.
+Backwards-compatible: existing imports of `KeyringTokenStore`,
+`PlainFileTokenStore`, `EncryptedFileTokenStore`, `TokenStore`,
+`NoUsableTokenStoreError`, `get_token_store` keep working from this
+module.
 """
 
 from __future__ import annotations
 
 import os
-import secrets
-from base64 import urlsafe_b64encode
 from pathlib import Path
-from typing import Protocol
 
 import keyring
-import keyring.backend
-import keyring.backends.fail
-import keyring.errors
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+from mcp_microsoft_graph_auth.token_store import (
+    EncryptedFileTokenStore as _LibEncryptedFileTokenStore,
+)
+from mcp_microsoft_graph_auth.token_store import (
+    KeyringTokenStore as _LibKeyringTokenStore,
+)
+from mcp_microsoft_graph_auth.token_store import (
+    NoUsableTokenStoreError as NoUsableTokenStoreError,
+)
+from mcp_microsoft_graph_auth.token_store import (
+    PlainFileTokenStore as _LibPlainFileTokenStore,
+)
+from mcp_microsoft_graph_auth.token_store import (
+    TokenStore as TokenStore,
+)
+from mcp_microsoft_graph_auth.token_store import (
+    is_real_keyring_backend as is_real_keyring_backend,
+)
 
 KEYRING_SERVICE = "outlook-mcp"
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "outlook-mcp"
 PASSPHRASE_ENV = "OUTLOOK_TOKEN_PASSPHRASE"
 STORE_OVERRIDE_ENV = "OUTLOOK_TOKEN_STORE"
 
-# Scrypt parameters chosen for ~50ms KDF on a typical laptop —
-# memory-hard enough to defeat GPU brute force on a leaked file
-# while keeping CLI startup snappy.
-_SCRYPT_N = 2**14
-_SCRYPT_R = 8
-_SCRYPT_P = 1
-_SALT_BYTES = 16
+__all__ = [
+    "DEFAULT_CACHE_DIR",
+    "KEYRING_SERVICE",
+    "PASSPHRASE_ENV",
+    "STORE_OVERRIDE_ENV",
+    "EncryptedFileTokenStore",
+    "KeyringTokenStore",
+    "NoUsableTokenStoreError",
+    "PlainFileTokenStore",
+    "TokenStore",
+    "get_token_store",
+]
 
 
-class NoUsableTokenStoreError(RuntimeError):
-    """Raised when no token-store backend can be activated.
-
-    Realistically only fires when the user gave an invalid
-    `OUTLOOK_TOKEN_STORE` override or `OUTLOOK_TOKEN_STORE=encrypted-file`
-    without a passphrase. The default auto-pick always finds a
-    backend (plain file is the universal fallback).
-    """
-
-
-class TokenStore(Protocol):
-    """Persistence interface for OAuth tokens, namespaced by profile.
-
-    Implementations must be safe to instantiate multiple times against
-    the same underlying storage; concurrent access is not required for
-    v0.1 (one MCP process per profile).
-    """
-
-    def get(self, profile: str) -> bytes | None:
-        """Return stored bytes for `profile`, or None if not stored."""
-        ...
-
-    def set(self, profile: str, value: bytes) -> None:
-        """Store `value` under `profile`. Overwrites if it exists."""
-        ...
-
-    def delete(self, profile: str) -> None:
-        """Remove stored value for `profile`. No-op if not present."""
-        ...
-
-
-class KeyringTokenStore:
-    """python-keyring-backed token store.
-
-    Stores tokens as the password value under a `(service, profile)`
-    key pair in the active OS keyring. Requires a real backend; calls
-    raise `keyring.errors.NoKeyringError` on `fail.Keyring`.
-    """
+class KeyringTokenStore(_LibKeyringTokenStore):
+    """Outlook-flavoured keyring backend (default service: 'outlook-mcp')."""
 
     def __init__(self, service: str = KEYRING_SERVICE) -> None:
-        self._service = service
-
-    def get(self, profile: str) -> bytes | None:
-        value = keyring.get_password(self._service, profile)
-        return value.encode() if value is not None else None
-
-    def set(self, profile: str, value: bytes) -> None:
-        keyring.set_password(self._service, profile, value.decode())
-
-    def delete(self, profile: str) -> None:
-        try:
-            keyring.delete_password(self._service, profile)
-        except keyring.errors.PasswordDeleteError:
-            # Already absent — match Protocol's "no-op if not present" contract.
-            pass
+        super().__init__(service_name=service)
 
 
-class EncryptedFileTokenStore:
-    """Fernet-encrypted-file token store.
+class PlainFileTokenStore(_LibPlainFileTokenStore):
+    """Outlook-flavoured plain-file backend (default base_dir: ~/.cache/outlook-mcp)."""
 
-    Layout per profile under `base_dir`:
+    def __init__(self, base_dir: Path | None = None) -> None:
+        super().__init__(base_dir=base_dir if base_dir is not None else DEFAULT_CACHE_DIR)
 
-        <base_dir>/<profile>/token.enc    Fernet ciphertext
-        <base_dir>/<profile>/token.salt   16 random bytes (Scrypt salt)
 
-    Both files are mode 0o600 (owner-only) on POSIX.
+class EncryptedFileTokenStore(_LibEncryptedFileTokenStore):
+    """Outlook-flavoured encrypted-file backend.
 
-    Passphrase is read from the env var named by `passphrase_env` at
-    every call — it is never cached in memory beyond the duration of
-    the call. A wrong passphrase produces `cryptography.fernet.InvalidToken`
-    on `get()`.
+    Reads the passphrase from `OUTLOOK_TOKEN_PASSPHRASE` (or the
+    override `passphrase_env`) at construction time. Construction
+    raises `NoUsableTokenStoreError` when the env var is unset or
+    empty — this is earlier than the predecessor's lazy raise-on-use,
+    but catches misconfigured CI faster.
     """
 
     def __init__(
@@ -132,114 +88,16 @@ class EncryptedFileTokenStore:
         base_dir: Path | None = None,
         passphrase_env: str = PASSPHRASE_ENV,
     ) -> None:
-        self._base_dir = base_dir if base_dir is not None else DEFAULT_CACHE_DIR
-        self._passphrase_env = passphrase_env
-
-    def _passphrase(self) -> bytes:
-        pp = os.environ.get(self._passphrase_env, "").encode()
-        if not pp:
+        passphrase = os.environ.get(passphrase_env, "")
+        if not passphrase:
             raise NoUsableTokenStoreError(
-                f"Encrypted-file token store requires the {self._passphrase_env} "
+                f"Encrypted-file token store requires the {passphrase_env} "
                 "environment variable to be set and non-empty.",
             )
-        return pp
-
-    def _profile_dir(self, profile: str) -> Path:
-        d = self._base_dir / profile
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
-    def _derive_key(self, salt: bytes) -> bytes:
-        kdf = Scrypt(salt=salt, length=32, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P)
-        return urlsafe_b64encode(kdf.derive(self._passphrase()))
-
-    def get(self, profile: str) -> bytes | None:
-        d = self._profile_dir(profile)
-        token_file = d / "token.enc"
-        salt_file = d / "token.salt"
-        if not token_file.exists() or not salt_file.exists():
-            return None
-        salt = salt_file.read_bytes()
-        ciphertext = token_file.read_bytes()
-        return Fernet(self._derive_key(salt)).decrypt(ciphertext)
-
-    def set(self, profile: str, value: bytes) -> None:
-        d = self._profile_dir(profile)
-        salt_file = d / "token.salt"
-        if salt_file.exists():
-            salt = salt_file.read_bytes()
-        else:
-            salt = secrets.token_bytes(_SALT_BYTES)
-            salt_file.write_bytes(salt)
-            salt_file.chmod(0o600)
-        ciphertext = Fernet(self._derive_key(salt)).encrypt(value)
-        token_file = d / "token.enc"
-        token_file.write_bytes(ciphertext)
-        token_file.chmod(0o600)
-
-    def delete(self, profile: str) -> None:
-        d = self._profile_dir(profile)
-        for name in ("token.enc", "token.salt"):
-            try:
-                (d / name).unlink()
-            except FileNotFoundError:
-                pass
-
-
-class PlainFileTokenStore:
-    """Plain JSON file token store, mode 0600.
-
-    Universal fallback used when no OS keyring is available and the
-    user hasn't opted into encrypted-file mode. Same security model
-    as `gh auth login`, `aws configure`, `npm login`,
-    `~/.ssh/id_rsa`: trust the local user account.
-
-    Layout per profile:
-
-        <base_dir>/<profile>/token.json   JSON of the CachedToken dict
-
-    File mode is 0o600 (owner-only) on POSIX. Directory is created
-    on demand. No env vars required.
-    """
-
-    def __init__(self, base_dir: Path | None = None) -> None:
-        self._base_dir = base_dir if base_dir is not None else DEFAULT_CACHE_DIR
-
-    def _profile_dir(self, profile: str) -> Path:
-        d = self._base_dir / profile
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
-    def get(self, profile: str) -> bytes | None:
-        token_file = self._profile_dir(profile) / "token.json"
-        if not token_file.exists():
-            return None
-        return token_file.read_bytes()
-
-    def set(self, profile: str, value: bytes) -> None:
-        token_file = self._profile_dir(profile) / "token.json"
-        token_file.write_bytes(value)
-        token_file.chmod(0o600)
-
-    def delete(self, profile: str) -> None:
-        try:
-            (self._profile_dir(profile) / "token.json").unlink()
-        except FileNotFoundError:
-            pass
-
-
-def _is_real_keyring_backend(kr: keyring.backend.KeyringBackend) -> bool:
-    """Return True if `kr` is a real OS keychain integration.
-
-    Excludes `fail.Keyring` (placeholder when no backend is available)
-    and any backend whose class name suggests plaintext storage
-    (`keyrings.alt.file.PlaintextKeyring` and friends).
-    """
-    if isinstance(kr, keyring.backends.fail.Keyring):
-        return False
-    if "Plaintext" in type(kr).__name__:
-        return False
-    return True
+        super().__init__(
+            base_dir=base_dir if base_dir is not None else DEFAULT_CACHE_DIR,
+            passphrase=passphrase,
+        )
 
 
 def get_token_store() -> TokenStore:
@@ -254,9 +112,7 @@ def get_token_store() -> TokenStore:
        (opt-in, useful for CI where the passphrase + ciphertext are
        separate secrets).
     4. Auto: plain-file backend (`~/.cache/outlook-mcp/<profile>/
-       token.json` mode 0600). This is the default fallback for
-       headless Linux and matches what `gh auth login`,
-       `aws configure`, etc. do.
+       token.json` mode 0600).
 
     Returns a backend; some backends may still raise at `set()` /
     `get()` time (e.g. a forced keyring choice with no real backend).
@@ -273,7 +129,7 @@ def get_token_store() -> TokenStore:
             f"{STORE_OVERRIDE_ENV} must be 'keyring', 'file', or 'encrypted-file'; got {forced!r}",
         )
 
-    if _is_real_keyring_backend(keyring.get_keyring()):
+    if is_real_keyring_backend(keyring.get_keyring()):
         return KeyringTokenStore()
 
     if os.environ.get(PASSPHRASE_ENV):
