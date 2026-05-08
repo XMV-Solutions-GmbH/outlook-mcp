@@ -44,18 +44,35 @@ green() { printf '\033[0;32m%s\033[0m\n' "$*"; }
 blue()  { printf '\033[0;34m%s\033[0m\n' "$*"; }
 yellow(){ printf '\033[0;33m%s\033[0m\n' "$*"; }
 
+# Publisher-info URLs — point at the live xmv.de subpages.
+PRIVACY_URL="https://www.xmv.de/oss/outlook-mcp/privacy"
+TERMS_URL="https://www.xmv.de/oss/outlook-mcp/terms"
+MARKETING_URL="https://github.com/XMV-Solutions-GmbH/outlook-mcp"
+SUPPORT_URL="https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues"
+
 command -v az >/dev/null 2>&1 || { red "ERROR: az CLI not installed."; exit 1; }
 command -v jq >/dev/null 2>&1 || { red "ERROR: jq not installed."; exit 1; }
 
-blue ">> Step 1/4: Sign in to Azure"
-az login --output none
+blue ">> Step 1/5: Verify Azure login"
+if ! az account show >/dev/null 2>&1; then
+    yellow "    Not signed in — running 'az login'..."
+    az login --output none
+fi
+TENANT=$(az account show --query "tenantDisplayName" -o tsv)
+USER=$(az account show --query "user.name" -o tsv)
+green ">> Signed in as ${USER} on tenant ${TENANT}"
 
-blue ">> Step 2/4: Create app registration '${APP_NAME}' (multi-tenant)"
-APP_JSON=$(az ad app create \
-    --display-name "${APP_NAME}" \
-    --sign-in-audience "${SIGN_IN_AUDIENCE}" \
-    --is-fallback-public-client true \
-    --required-resource-accesses "$(cat <<EOF
+blue ">> Step 2/5: Find or create app registration '${APP_NAME}' (idempotent)"
+EXISTING=$(az ad app list --display-name "${APP_NAME}" --query "[0].appId" -o tsv 2>/dev/null || true)
+if [[ -n "${EXISTING}" ]]; then
+    APP_ID="${EXISTING}"
+    yellow ">> Found existing app registration; reusing appId=${APP_ID}"
+else
+    APP_ID=$(az ad app create \
+        --display-name "${APP_NAME}" \
+        --sign-in-audience "${SIGN_IN_AUDIENCE}" \
+        --is-fallback-public-client true \
+        --required-resource-accesses "$(cat <<EOF
 [
     {
         "resourceAppId": "${GRAPH_APP_ID}",
@@ -71,13 +88,11 @@ APP_JSON=$(az ad app create \
 ]
 EOF
 )" \
-    --query '{appId:appId, displayName:displayName}' \
-    -o json)
+        --query "appId" -o tsv)
+    green ">> App registration created. appId=${APP_ID}"
+fi
 
-APP_ID=$(echo "${APP_JSON}" | jq -r '.appId')
-green ">> App registration created. appId=${APP_ID}"
-
-blue ">> Step 3/4: Confirm public-client redirect URI for Device Code flow"
+blue ">> Step 3/5: Confirm public-client redirect URI for Device Code flow"
 # Microsoft requires the well-known Device Code redirect URI to be present
 # even on public-client apps for the flow to succeed in some tenants.
 az ad app update \
@@ -86,19 +101,39 @@ az ad app update \
     --output none
 green ">> Public-client redirect URI configured."
 
-blue ">> Step 4/4: Sanity check — list configured permissions"
+blue ">> Step 4/5: Set publisher-info URLs (privacy / terms / marketing / support)"
+OBJECT_ID=$(az ad app show --id "${APP_ID}" --query "id" -o tsv)
+az rest --method PATCH \
+    --uri "https://graph.microsoft.com/v1.0/applications/${OBJECT_ID}" \
+    --headers "Content-Type=application/json" \
+    --body "$(cat <<EOF
+{
+    "info": {
+        "privacyStatementUrl": "${PRIVACY_URL}",
+        "termsOfServiceUrl":   "${TERMS_URL}",
+        "marketingUrl":        "${MARKETING_URL}",
+        "supportUrl":          "${SUPPORT_URL}"
+    }
+}
+EOF
+)" \
+    --output none
+green ">> Publisher info URLs configured."
+
+blue ">> Step 5/5: Sanity check — list configured permissions"
 az ad app permission list \
     --id "${APP_ID}" \
     --query "[].resourceAccess[].id" -o tsv | sort
 echo
 
 green "==================================================================="
-green "  Done. Update src/outlook_mcp/auth/flow.py:"
+green "  Done. The default client id for outlook-mcp is:"
 green ""
 green "      DEFAULT_CLIENT_ID = \"${APP_ID}\""
 green ""
-green "  Then commit + push. Users will pick up the new client_id from"
-green "  the next published release."
+green "  If src/outlook_mcp/auth/flow.py still has a different value,"
+green "  patch it and commit + push so users pick it up from the next"
+green "  published release."
 green "==================================================================="
 
 yellow ""
