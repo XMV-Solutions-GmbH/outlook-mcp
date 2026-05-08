@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
 name: release
 
 on:
@@ -7,13 +8,45 @@ on:
 
 permissions:
   contents: write
+  id-token: write  # for PyPI Trusted Publisher (OIDC)
 
 jobs:
-  release:
+  build-and-publish:
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/mcp-server-outlook
     steps:
       - uses: actions/checkout@v6
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install package + dev dependencies
+        run: uv sync --extra dev
+
+      - name: Run unit + integration tests (gate)
+        run: ./tests/run_tests.sh
+
+      - name: Build wheel + sdist
+        run: uv build
+
+      - name: Publish to PyPI (OIDC Trusted Publisher)
+        # Requires PyPI Trusted Publisher configured for this repo +
+        # the `pypi` GH environment.
+        run: uv publish
+
+  github-release:
+    runs-on: ubuntu-latest
+    needs: build-and-publish
+    steps:
+      - uses: actions/checkout@v6
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Contributing to OSS Project Template
+# Contributing to mcp-server-outlook
 
-Thank you for your interest in contributing to this project! This document provides guidelines for contributing.
+Thank you for your interest in contributing! This document provides guidelines for contributions to `mcp-server-outlook`.
 
 ---
 
@@ -22,13 +22,15 @@ By participating in this project, you agree to abide by our [Code of Conduct](CO
 ### Setup
 
 ```bash
-# Clone the repository
-git clone https://github.com/XMV-Solutions-GmbH/oss-project-template.git
-cd oss-project-template
+git clone https://github.com/XMV-Solutions-GmbH/outlook-mcp.git
+cd outlook-mcp
+uv sync --extra dev
 
-# Configure your project
-# Edit repo.ini with your project details
+# Run the test harness
+./tests/run_tests.sh
 ```
+
+See [`README.md` § Development](README.md#development) for more.
 
 ---
 
@@ -72,7 +74,7 @@ Every source file MUST start with an SPDX licence identifier:
 ### 1. Fork the Repository
 
 ```bash
-gh repo fork XMV-Solutions-GmbH/oss-project-template
+gh repo fork XMV-Solutions-GmbH/outlook-mcp
 ```
 
 ### 2. Create a Feature Branch
@@ -92,15 +94,10 @@ git checkout -b fix/bug-description
 ### 4. Run All Checks
 
 ```bash
-# Run linting (example for different tech stacks)
-npm run lint        # Node.js
-cargo fmt --check   # Rust
-flake8 .           # Python
-
-# Run tests
-npm test           # Node.js
-cargo test         # Rust
-pytest             # Python
+uv run ruff format --check src tests
+uv run ruff check src tests
+uv run mypy src/outlook_mcp tests
+./tests/run_tests.sh
 ```
 
 ### 5. Open a Pull Request
