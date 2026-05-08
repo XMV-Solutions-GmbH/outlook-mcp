@@ -47,6 +47,7 @@ from outlook_mcp.tools.email_read import read_email as _do_email_read
 from outlook_mcp.tools.email_search import search as _do_email_search
 from outlook_mcp.tools.email_send_draft import send_draft as _do_email_send_draft
 from outlook_mcp.tools.email_update_draft import update_draft as _do_email_update_draft
+from outlook_mcp.tools.login_status import login_status as _do_login_status
 from outlook_mcp.tools.status import status as _do_status
 
 PROFILE_ENV = "OUTLOOK_PROFILE"
@@ -268,6 +269,36 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
             limit=limit,
             profile=_get_profile(),
         )
+
+    @mcp_instance.tool(
+        annotations=ToolAnnotations(
+            title="Outlook Login Status",
+            readOnlyHint=True,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+        description=(
+            "Return the current Microsoft 365 sign-in status for "
+            "this profile. Three states: `signed_in` (a usable token "
+            "exists, regardless of how it got there — CLI login, "
+            "ol_login_begin tool, even days ago), `pending` (a "
+            "Device Code flow is in flight from a recent "
+            "ol_login_begin call; the response carries `user_code` + "
+            "`verification_url` so the agent can re-display the "
+            "prompt), or `none` (no token, no flow — the agent "
+            "should call ol_login_begin). Read-only: actively probes "
+            "the token store + does at most one `/me` round-trip on "
+            "a fresh signed_in to learn the UPN. "
+            "When relaying a `pending` result to the user, render "
+            "`user_code` FIRST in its own code block (no labels, no "
+            "whitespace) and `verification_url` SECOND as a plain "
+            "auto-link (not in a code block). The user copies the "
+            "code first, then clicks the link, and pastes into the "
+            "page that opens — minimises app-switching on mobile."
+        ),
+    )
+    def ol_login_status() -> dict[str, Any]:
+        return _do_login_status(profile=_get_profile())
 
 
 def register_write_tools(mcp_instance: FastMCP) -> None:

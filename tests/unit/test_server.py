@@ -76,6 +76,7 @@ def test_register_read_tools_adds_all_read_tools() -> None:
         "ol_calendar_search",
         "ol_calendar_list_events",
         "ol_status",
+        "ol_login_status",
     }
 
 
