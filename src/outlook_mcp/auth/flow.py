@@ -45,10 +45,13 @@ from outlook_mcp.auth.tokens import CachedToken
 # ---------------------------------------------------------------------
 
 AUTHORITY_BASE = "https://login.microsoftonline.com"
-# Placeholder: replace with the real outlook-mcp Entra app registration
-# GUID before the first PyPI release. Tracked in docs/app-concept.md
-# § Open questions for the tech spike.
-DEFAULT_CLIENT_ID = "00000000-0000-0000-0000-000000000000"
+# XMV-published multi-tenant Entra app registration for mcp-server-outlook.
+# Public client, Device Code flow enabled, delegated scopes only —
+# Mail.Read, Mail.ReadWrite, Calendars.Read, Calendars.ReadWrite,
+# User.Read, offline_access. Notably NOT Mail.Send: drafts only, sends
+# stay a manual action in Outlook. Override via OUTLOOK_CLIENT_ID for
+# tenants with strict app-allowlisting.
+DEFAULT_CLIENT_ID = "5df367d9-4c9b-44fd-9f84-0b4fb1f1268a"
 DEFAULT_AUTHORITY_TENANT = "organizations"
 DEFAULT_SCOPES = (
     "Mail.Read",
