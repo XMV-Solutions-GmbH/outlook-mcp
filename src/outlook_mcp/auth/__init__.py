@@ -46,6 +46,7 @@ from outlook_mcp.auth.flow import (
     poll_for_token,
     refresh_access_token,
     request_device_code,
+    resolve_scopes,
 )
 from outlook_mcp.auth.service_principal import (
     ServicePrincipalConfigError,
@@ -213,6 +214,7 @@ def get_token(
             refresh_token=cached.refresh_token,
             client_id=resolved_client,
             tenant=resolved_tenant,
+            scopes=resolve_scopes(),
             http=http,
         )
     except RefreshTokenInvalidError as exc:
@@ -252,10 +254,14 @@ def interactive_login(
     resolved_tenant = _resolve_tenant(tenant)
     resolved_store = store if store is not None else get_token_store()
     resolved_prompt = prompt if prompt is not None else _default_prompt
+    # OUTLOOK_ALLOW_SEND-aware: appends Mail.Send only when the env var
+    # is truthy. See auth/flow.py:resolve_scopes() for the design.
+    scopes = resolve_scopes()
 
     device_code, challenge = request_device_code(
         client_id=resolved_client,
         tenant=resolved_tenant,
+        scopes=scopes,
         http=http,
     )
     resolved_prompt(challenge)

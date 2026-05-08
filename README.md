@@ -36,7 +36,7 @@ Concretely, the agent gets these tools:
 | *(v0.2)* `ol_email_create_draft`, `ol_email_update_draft` | creates drafts in your Drafts folder | a draft appears — **you** review and click Send |
 | *(v0.2)* `ol_calendar_create_event_draft` | creates a tentative event with `responseRequested=False` | a draft event sits on your calendar — **you** send invites |
 
-Every action is attributed to the human who signed in once via Microsoft's standard Device Code login. No service-account "robot" identity. **No `Mail.Send` permission ever requested** — the consent prompt explicitly does NOT include "this app can send mail as you", which is the line tenant admins (and your auditor) actually care about.
+Every action is attributed to the human who signed in once via Microsoft's standard Device Code login. No service-account "robot" identity. **The default install does not request `Mail.Send`** — the consent prompt does NOT include "this app can send mail as you", which is the line tenant admins (and your auditor) actually care about. Sending is opt-in via `OUTLOOK_ALLOW_SEND=true` (v0.3+) — see [Sending: opt-in](#sending-opt-in-via-outlook_allow_send) — and even when enabled, the agent never auto-sends; the human reviews each draft before any send tool call.
 
 ## Installation
 
@@ -148,13 +148,41 @@ In v0.2, draft tools become available so the agent can write the reply email or 
 #### Required Microsoft Graph scopes (delegated)
 
 - `Mail.Read` — read inbox + folders
-- `Mail.ReadWrite` — create / update / discard drafts (v0.2). Does **not** include send permission — that's `Mail.Send`, intentionally absent.
+- `Mail.ReadWrite` — create / update / discard drafts (v0.2)
+- `Mail.Send` — send a draft (v0.3+). Only requested when `OUTLOOK_ALLOW_SEND=true` is set. The default install never requests this scope; the consent screen stays drafts-only.
 - `Calendars.Read` — read events
 - `Calendars.ReadWrite` — create / update / discard event drafts (v0.2)
 - `User.Read` — basic profile (signed-in user identification)
 - `offline_access` — refresh tokens
 
-**`Mail.Send` is never requested**, ever — sends remain a human action in Outlook.
+**The default install never requests `Mail.Send`.** Sending is opt-in via `OUTLOOK_ALLOW_SEND=true` (v0.3+); see the section below. Even with the opt-in active, the agent never auto-sends — every send requires an explicit `ol_email_send_draft(draft_id)` tool call referencing a draft the human has already reviewed in Outlook.
+
+#### Sending: opt-in via `OUTLOOK_ALLOW_SEND`
+
+For agent-driven workflows that close the loop ("draft, review, send" all in one MCP session), v0.3 adds an opt-in send tool. To enable it:
+
+```json
+{
+  "mcpServers": {
+    "outlook": {
+      "command": "uvx",
+      "args": ["mcp-server-outlook"],
+      "env": {
+        "OUTLOOK_ALLOW_DRAFTS": "true",
+        "OUTLOOK_ALLOW_SEND": "true"
+      }
+    }
+  }
+}
+```
+
+What this changes:
+
+1. The next `mcp-server-outlook login` request additionally asks for `Mail.Send` consent. Microsoft's consent screen will explicitly include "send mail as you" — you have to click Approve.
+2. The MCP server registers an additional tool: `ol_email_send_draft(draft_id)`. It refuses to send any draft that's not in the per-profile registry (i.e. only sends drafts the agent itself created).
+3. **Still no autonomous send.** The agent must explicitly call `ol_email_send_draft(draft_id)` with a specific draft id. Human-in-the-loop on every send: the user reviews the draft body and recipients in Outlook between `ol_email_create_draft` and `ol_email_send_draft`.
+
+If you're unsure whether you want this, leave the flag out. The default drafts-only mode is sufficient for the most common operator workflows.
 
 #### Service-principal mode (unattended automation)
 
@@ -164,11 +192,12 @@ Tradeoff: every action is attributed to the *application* principal, NOT a real 
 
 ### Safety model
 
-Three layers of "don't accidentally do something irreversible":
+Four layers of "don't accidentally do something irreversible":
 
-1. **Your MCP client (Claude Code) prompts before each tool call by default.** Read tools are flagged read-only; draft tools are flagged "creates draft (no send)" — you see the difference at the prompt.
+1. **Your MCP client (Claude Code) prompts before each tool call by default.** Read tools are flagged read-only; draft tools are flagged "creates draft (no send)"; the v0.3+ send tool is flagged destructive — you see the difference at the prompt.
 2. **Drafts opt-in via env (v0.2).** Without `OUTLOOK_ALLOW_DRAFTS=true`, the draft-creation tools aren't even registered. The agent literally can't draft.
-3. **No send tools — anywhere.** Sending is exclusively a human action in Outlook. This is structural, not config-flag-able. Even with `OUTLOOK_ALLOW_DRAFTS=true`, sends remain manual.
+3. **Send opt-in via a separate env (v0.3).** Without `OUTLOOK_ALLOW_SEND=true`, the send tool is not registered AND `Mail.Send` is not in the OAuth scope request. The default consent screen stays drafts-only.
+4. **Never autonomous send.** Even with both opt-ins active, the agent must explicitly call `ol_email_send_draft(draft_id)` with a specific draft id. There is no path where an agent's tool call results in a sent email without the human first being able to read the draft body and recipients in Outlook.
 
 The threat model is "your local OS account is trusted" — same as `~/.ssh/id_rsa`, `gh` tokens, `aws` config. The tool isn't designed to defend against host compromise; it's designed to keep audit trails honest under normal use.
 
@@ -231,7 +260,7 @@ Tenants with strict app-allowlisting can override the bundled multi-tenant defau
 }
 ```
 
-The app registration must be: multi-tenant or single-tenant, public client (no secret), Device Code flow allowed, with delegated permissions `Mail.Read`, `Calendars.Read`, `User.Read`, `offline_access` (plus `Mail.ReadWrite`, `Calendars.ReadWrite` once v0.2 ships drafts). **Do not grant `Mail.Send`** — this MCP never sends.
+The app registration must be: multi-tenant or single-tenant, public client (no secret), Device Code flow allowed, with delegated permissions `Mail.Read`, `Mail.ReadWrite`, `Calendars.Read`, `Calendars.ReadWrite`, `User.Read`, `offline_access`. Optionally add `Mail.Send` if you intend to enable `OUTLOOK_ALLOW_SEND=true` for an opt-in send tool — the runtime auth flow only requests this scope when that env var is truthy.
 
 ## Token storage
 

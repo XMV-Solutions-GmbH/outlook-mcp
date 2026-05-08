@@ -31,7 +31,7 @@ This MCP fixes all three: **local process per tenant, multi-profile**, **Microso
 
 ## Non-goals
 
-- **Never auto-send.** No tool exposes `send_email` or `send_invitation` directly. The agent's reach ends at "draft saved". Human is always in the send-loop.
+- **Never autonomous send.** The default install does not register any `send_*` tool and does not request `Mail.Send`. Sending is opt-in via `OUTLOOK_ALLOW_SEND=true` (v0.3+); when enabled, the new `ol_email_send_draft(draft_id)` tool requires an explicit per-draft tool call after the human reviews the draft in Outlook. There is no path where the agent makes a sending decision autonomously. There is no `send_invitation` tool — calendar event drafts are created with `responseRequested=false` so Microsoft Graph never auto-emails attendees; the human clicks Send Invitation in Outlook manually.
 - **Not a sync engine.** No local IMAP mirror, no offline cache. Each call hits Microsoft Graph live.
 - **Not a Teams / Files / OneNote MCP.** OneDrive personal works incidentally (overlap with sharepoint-mcp's surface). Teams chat, OneNote, Tasks: out of scope. Sibling MCPs if needed.
 - **Not an admin tool.** No mailbox provisioning, no permission management, no transport rules.
@@ -86,6 +86,12 @@ ol_email_list_drafts(profile_only=True)
 ol_email_discard_draft(draft_id)
     → deletes a draft created by this MCP profile
 
+ol_email_send_draft(draft_id)
+    → sends a draft created by this MCP profile. **Opt-in via OUTLOOK_ALLOW_SEND=true.**
+       NOT registered in the default install. NOT autonomous: the draft must already
+       exist in Drafts (from an earlier ol_email_create_draft call) and the human can
+       review it in Outlook between create and send. v0.3+.
+
 ol_calendar_create_event_draft(subject, start, end, attendees?, body?, location?)
     → creates a tentative event on the user's calendar; sets responseRequested=False
        so no invitations are auto-sent. The user can review and either send invites
@@ -97,8 +103,8 @@ ol_calendar_discard_event_draft(event_id)
 
 ### Explicitly NOT exposed (by design)
 
-- `send_email` / `send_draft` — human-only action, perform in Outlook UI.
-- `send_calendar_invitation` — same.
+- `send_email` / `send_draft` (autonomous) — see `ol_email_send_draft` above for the explicit-send opt-in path; nothing in this server's tool surface sends without an explicit per-draft tool call.
+- `send_calendar_invitation` — calendar drafts use `responseRequested=false`, so no auto-emailing. The human clicks Send Invitation in Outlook manually.
 - `delete_email` / `archive_email` — read-only on inbox; user manages their own mailbox state.
 - Bulk operations on emails the user did not author or did not create as drafts via this MCP — defensive against fat-finger mass changes.
 
@@ -214,15 +220,18 @@ It also fits the operator-workbench model where multiple tenants live side-by-si
 **Required Microsoft Graph scopes (delegated):**
 
 - `Mail.Read` — read inbox + folders
-- `Mail.ReadWrite` — create / update / discard drafts (does NOT include send permission — that's `Mail.Send`, intentionally excluded)
+- `Mail.ReadWrite` — create / update / discard drafts (v0.2)
 - `Calendars.Read` — read events
-- `Calendars.ReadWrite` — create event drafts
+- `Calendars.ReadWrite` — create event drafts (v0.2)
 - `User.Read` — basic profile (signed-in user identification)
 - `offline_access` — refresh tokens
 
+**Lazy / opt-in scope:**
+
+- `Mail.Send` — added to the OAuth scope request only when `OUTLOOK_ALLOW_SEND=true` is set in the MCP client config (v0.3+). The default install does NOT request this scope; the consent prompt stays drafts-only. Even with the opt-in active, the agent never auto-sends; sending requires an explicit `ol_email_send_draft(draft_id)` call referencing a draft the human has already reviewed.
+
 **Explicitly NOT requested:**
 
-- `Mail.Send` — not needed; we don't send. Excluding it makes the consent prompt more reassuring (no "this app can send mail as you").
 - Anything in the `admin.*` Graph namespace.
 
 **BYO override (Enterprise tenants with strict app allowlisting):**

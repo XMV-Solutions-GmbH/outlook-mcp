@@ -21,6 +21,7 @@ from mcp.server.fastmcp import FastMCP
 from outlook_mcp.server import (
     drafts_enabled,
     register_read_tools,
+    register_send_tools,
     register_write_tools,
 )
 
@@ -233,16 +234,97 @@ def test_update_draft_tool_is_destructive() -> None:
     assert update_tool.annotations.idempotentHint is True
 
 
-def test_no_send_tool_exists_anywhere() -> None:
-    """The defining design constraint of this server: NO send_* tool
-    is ever registered, even with OUTLOOK_ALLOW_DRAFTS=true. If this
-    test ever fails, someone violated the never-auto-send rule."""
-    server = FastMCP("test-with-drafts")
+def test_no_send_tool_in_default_config() -> None:
+    """The default config invariant: NO send_* tool is registered
+    when only `OUTLOOK_ALLOW_DRAFTS` is set (and `OUTLOOK_ALLOW_SEND`
+    is unset). The default install is drafts-only.
+
+    From v0.3 onwards, send is opt-in via OUTLOOK_ALLOW_SEND=true
+    (covered by test_register_send_tools_adds_email_send_draft below).
+    Without that explicit second flag, no send_* tool exists — that's
+    the load-bearing invariant for the default consent posture."""
+    server = FastMCP("test-with-drafts-only")
     register_read_tools(server)
     register_write_tools(server)
+    # Crucially: NO register_send_tools call here.
     names = _list_tool_names(server)
     for name in names:
         assert "send" not in name.lower(), (
-            f"Tool {name!r} contains 'send' — the never-auto-send rule "
-            f"forbids any send_* tool, ever."
+            f"Tool {name!r} contains 'send' — when OUTLOOK_ALLOW_SEND "
+            f"is not explicitly set, no send_* tool may be registered."
         )
+
+
+# ---------------------------------------------------------------------
+# register_send_tools — opt-in via OUTLOOK_ALLOW_SEND
+# ---------------------------------------------------------------------
+
+
+def test_register_send_tools_adds_email_send_draft() -> None:
+    """When the OUTLOOK_ALLOW_SEND opt-in is active and
+    register_send_tools is invoked, the ol_email_send_draft tool
+    becomes visible to the agent."""
+    server = FastMCP("test-with-send")
+    register_write_tools(server)
+    register_send_tools(server)
+    names = _list_tool_names(server)
+    assert "ol_email_send_draft" in names
+
+
+def test_send_draft_tool_is_destructive_not_idempotent() -> None:
+    """Sending a draft is irreversible (the mail leaves the user's
+    mailbox and is delivered) — destructiveHint=True. Re-sending an
+    already-sent draft yields a 404 from Graph — idempotentHint=False."""
+    server = FastMCP("test-with-send")
+    register_send_tools(server)
+    [send_tool] = [t for t in asyncio.run(server.list_tools()) if t.name == "ol_email_send_draft"]
+    assert send_tool.annotations is not None
+    assert send_tool.annotations.readOnlyHint is False
+    assert send_tool.annotations.destructiveHint is True
+    assert send_tool.annotations.idempotentHint is False
+
+
+def test_module_level_server_registers_send_when_both_flags_truthy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OUTLOOK_ALLOW_DRAFTS=true AND OUTLOOK_ALLOW_SEND=true →
+    ol_email_send_draft is in the registered tool surface."""
+    monkeypatch.setenv("OUTLOOK_ALLOW_DRAFTS", "true")
+    monkeypatch.setenv("OUTLOOK_ALLOW_SEND", "true")
+    from outlook_mcp.server import _build_server
+
+    server = _build_server()
+    names = _list_tool_names(server)
+    assert "ol_email_send_draft" in names
+
+
+def test_module_level_server_omits_send_when_only_drafts_flag_truthy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OUTLOOK_ALLOW_DRAFTS=true but OUTLOOK_ALLOW_SEND missing →
+    ol_email_send_draft is NOT registered. Default opt-in posture."""
+    monkeypatch.setenv("OUTLOOK_ALLOW_DRAFTS", "true")
+    monkeypatch.delenv("OUTLOOK_ALLOW_SEND", raising=False)
+    from outlook_mcp.server import _build_server
+
+    server = _build_server()
+    names = _list_tool_names(server)
+    assert "ol_email_send_draft" not in names
+
+
+def test_module_level_server_omits_send_when_send_flag_without_drafts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OUTLOOK_ALLOW_SEND=true but OUTLOOK_ALLOW_DRAFTS missing →
+    invalid configuration. The send tool is NOT registered (you
+    can't send what you can't draft). A warning is logged but the
+    server doesn't fail to start."""
+    monkeypatch.delenv("OUTLOOK_ALLOW_DRAFTS", raising=False)
+    monkeypatch.setenv("OUTLOOK_ALLOW_SEND", "true")
+    from outlook_mcp.server import _build_server
+
+    server = _build_server()
+    names = _list_tool_names(server)
+    assert "ol_email_send_draft" not in names
+    # Drafts also not registered (drafts flag missing)
+    assert "ol_email_create_draft" not in names
