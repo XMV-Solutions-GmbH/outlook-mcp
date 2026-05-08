@@ -3,20 +3,23 @@
 # SPDX-FileContributor: David Koller <david.koller@xmv.de>
 """ol_login_begin — drive the OAuth Device Code flow as an MCP tool.
 
-Async tool that:
+**Non-blocking** async tool that:
 
 1. Returns the existing in-flight session (idempotent) when one is
    already pending for `profile` and `force=False`.
 2. Otherwise initiates a fresh Device Code flow (one HTTP round-trip
    to Microsoft Identity), records a `LoginSession` in the
-   process-wide registry, and starts polling.
-3. Streams progress notifications (`time_remaining_s`) while polling
-   when the calling MCP client advertises the progress capability.
-   Clients without that capability skip silently — bonus channel.
-4. Blocks until the polling task reaches a terminal state
-   (success / expired / failed). On success, writes the token to the
-   configured TokenStore + populates the UPN cache so subsequent
-   `ol_login_status` calls answer locally.
+   process-wide registry, kicks off a background polling task, and
+   **returns immediately** with the user-facing fields (`user_code`,
+   `verification_url`, etc.) so the agent can surface them.
+3. The agent then polls `ol_login_status` until status flips to
+   `signed_in` (or to a terminal `expired` / `failed`).
+
+Earlier blocking design (v0.3.0) deadlocked the UX: the tool sat
+waiting for the user to enter the code, but the user couldn't see
+the code because it was inside the not-yet-returned tool response.
+The non-blocking pattern in this fix matches the canonical RFC
+design and the sister project's `sp_login_begin`.
 
 `force=True` cancels any in-flight session for the profile and
 starts fresh — replaces the original four-tool RFC's separate
@@ -30,7 +33,6 @@ is started exactly once per session.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -66,32 +68,43 @@ async def login_begin(
     ctx: Context[Any, Any] | None = None,
     http: httpx.Client | None = None,
 ) -> dict[str, Any]:
-    """Drive the Device Code flow.
+    """Drive the Device Code flow. **Returns immediately, non-blocking.**
 
-    Returns the public-view dict of the resulting `LoginSession` —
-    fields include `session_id`, `user_code`, `verification_url`,
+    Returns the public-view dict of the resulting `LoginSession` with
+    `status="pending"` while polling continues in the background.
+    Fields: `session_id`, `user_code`, `verification_url`,
     `verification_url_complete`, `expires_at`, `time_remaining_s`,
-    `status`, `signed_in_user_upn`, `error`. Caller renders
-    `user_code` first (in a code block, no labels) and
-    `verification_url` second (plain auto-link); see the tool
-    description for the canonical UX phrasing.
+    `status`, `signed_in_user_upn`, `error`.
+
+    The agent renders `user_code` first (in a code block, no labels)
+    and `verification_url` second (plain auto-link), then polls
+    `ol_login_status` until status flips to `signed_in` or a terminal
+    failure state. See the tool description for the canonical UX
+    phrasing.
 
     Idempotent: if a non-expired pending session already exists for
     this profile, the existing session is returned without starting
     a second polling task. Pass `force=True` to cancel any in-flight
     session and start fresh.
+
+    `ctx` is accepted for forward compatibility with future progress-
+    notification work but is currently unused — the agent's
+    `ol_login_status` polling covers the use case without the
+    asyncio-task-vs-tool-response lifecycle complexity that
+    progress-during-blocking-tool-call would entail.
     """
+    del ctx  # currently unused — see docstring
     registry = get_login_session_registry()
     existing = registry.get(profile)
 
     if existing is not None and existing.status == "pending":
         if force:
             _cancel_session(existing)
+            registry.remove(profile)
         else:
-            # Idempotent return — block on the existing task if any,
-            # so the caller still gets a terminal status and progress
-            # notifications.
-            return await _await_terminal(existing, ctx=ctx)
+            # Idempotent: return the existing pending session unchanged.
+            # Same user_code, same expires_at, same poll task running.
+            return public_view(existing, now=datetime.now(UTC))
 
     # Initiate Device Code flow (sync HTTP, sub-second).
     device_code, challenge = await asyncio.to_thread(
@@ -116,11 +129,15 @@ async def login_begin(
         task=None,
         started_at=started_at,
     )
-    poll_task = asyncio.create_task(_poll_and_finalize(session, http=http))
-    session.task = poll_task
-    registry.put(session)
+    # First-write-wins for two concurrent callers — put_if_absent
+    # makes that atomic. If another caller raced, we drop our
+    # device_code and return their session.
+    final = registry.put_if_absent(session)
+    if final is not session:
+        return public_view(final, now=datetime.now(UTC))
 
-    return await _await_terminal(session, ctx=ctx)
+    final.task = asyncio.create_task(_poll_and_finalize(final, http=http))
+    return public_view(final, now=datetime.now(UTC))
 
 
 def _cancel_session(session: LoginSession) -> None:
@@ -129,51 +146,6 @@ def _cancel_session(session: LoginSession) -> None:
     task = session.task
     if isinstance(task, asyncio.Task) and not task.done():
         task.cancel()
-
-
-async def _await_terminal(
-    session: LoginSession,
-    *,
-    ctx: Context[Any, Any] | None,
-) -> dict[str, Any]:
-    """Wait for the session's polling task to reach a terminal state.
-
-    During the wait, send periodic progress notifications via `ctx`
-    (if the client advertises the capability). On exit, return the
-    session's `public_view`.
-    """
-    task = session.task
-    if not isinstance(task, asyncio.Task):
-        # No task to wait on — session is already terminal (rare).
-        return public_view(session, now=datetime.now(UTC))
-
-    interval_s = max(1, session.interval_s)
-    total_s = max(1.0, (session.expires_at - session.started_at).total_seconds())
-
-    while not task.done():
-        if ctx is not None:
-            now = datetime.now(UTC)
-            elapsed = (now - session.started_at).total_seconds()
-            time_remaining = max(0.0, (session.expires_at - now).total_seconds())
-            with contextlib.suppress(Exception):
-                # report_progress is a bonus channel — never fail the
-                # tool because progress emission failed (e.g. client
-                # has no progressToken).
-                await ctx.report_progress(
-                    progress=elapsed,
-                    total=total_s,
-                    message=f"Waiting for sign-in — {int(time_remaining)}s remaining",
-                )
-        try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=interval_s)
-        except TimeoutError:
-            continue
-        except asyncio.CancelledError:
-            # Caller cancelled this await; the polling task may
-            # still be running (asyncio.shield protected it).
-            raise
-
-    return public_view(session, now=datetime.now(UTC))
 
 
 async def _poll_and_finalize(
