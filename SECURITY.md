@@ -5,8 +5,7 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.x.x   | :white_check_mark: |
-| < 1.0   | :x:                |
+| 0.x     | :white_check_mark: (latest minor only, pre-1.0) |
 
 ## Reporting a Vulnerability
 
@@ -15,7 +14,7 @@ If you discover a security vulnerability, please do **not** open a public issue.
 ### How to Report
 
 1. **Email**: Send details to **<oss@xmv.de>**
-2. **Subject**: `[SECURITY] project-name: <brief description>`
+2. **Subject**: `[SECURITY] mcp-server-outlook: <brief description>`
 3. **Include**:
    - Description of the vulnerability
    - Steps to reproduce

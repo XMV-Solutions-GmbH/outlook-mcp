@@ -1,24 +1,19 @@
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Project Todo
 
-## Legend
+> **Frozen.** This file is a leftover from the OSS project template. New work for `mcp-server-outlook` lives in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues), milestoned to releases (`v0.1.0 — MVP`, `v0.2.0`, …). See [CLAUDE.md § Project-specific tracking](../CLAUDE.md#project-specific-tracking).
 
-- 🔴 Blocked
-- 🟡 In Progress
-- 🟢 Complete
-- ⚪ Not Started
+## v0.1 — what's in this initial scaffold
 
-## Milestones
+The first scaffold ships:
 
-### v0.1.0 — MVP
+- Auth stack — Device Code flow, three-tier token store, service-principal mode.
+- MCP server with `ol_email_search`, `ol_email_list_unread`, `ol_email_read`, `ol_calendar_search`, `ol_calendar_list_events`, `ol_status`.
+- CLI: `mcp-server-outlook login|logout`.
+- Three-layer test harness (unit / integration / harness) with `respx` for HTTP mocking.
+- CI: lint + test + harness jobs in GitHub Actions.
+- Release pipeline: tag push → `pypi` Trusted-Publisher OIDC publish.
 
-| Status | Task | Owner | Notes |
-| ------ | ---- | ----- | ----- |
-| 🟢     | Add AI Assistant Prompts (add-instruction.prompt.md) | AI    | Merged PR #8 |
-| 🟢     | Template Test Harness with Coverage | AI    | bats tests with kcov coverage |
-| 🟢     | Remove Proprietary Mode | AI    | Pure OSS template |
+## Open tech-spike questions
 
-## Backlog
-
-| Priority | Task | Complexity | Notes |
-| -------- | ---- | ---------- | ----- |
-| —        | TBD  | —          | —     |
+Tracked in [docs/app-concept.md § Open questions for the tech spike](app-concept.md#open-questions-for-the-tech-spike). Resolve before v0.2 ships drafts.
