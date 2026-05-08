@@ -34,10 +34,25 @@ GRAPH_APP_ID="00000003-0000-0000-c000-000000000000"  # Microsoft Graph well-know
 # Verified from `az ad sp show --id 00000003-0000-0000-c000-000000000000 --query "oauth2PermissionScopes"`.
 SCOPE_MAIL_READ="570282fd-fa5c-430d-a7fd-fc8dc98a9dca"
 SCOPE_MAIL_READWRITE="024d486e-b451-40bb-833d-3e66d98c5c73"
+SCOPE_MAIL_SEND="e383f46e-2787-4529-855e-0e479a3ffac0"
 SCOPE_CALENDARS_READ="465a38f9-76ea-45b9-9f34-9e8b0d4b0b42"
 SCOPE_CALENDARS_READWRITE="1ec239c2-d7c9-4623-a91a-a9775856bb36"
 SCOPE_USER_READ="e1fe6dd8-ba31-4d61-89e7-88639da4683d"
 SCOPE_OFFLINE_ACCESS="7427e0e9-2fba-42fe-b0c0-848c9e6a8182"
+
+# IMPORTANT: Mail.Send is REGISTERED on the app but is NOT in the
+# default OAuth scope request. The runtime auth flow only includes
+# Mail.Send in its scope request when the user has set
+# `OUTLOOK_ALLOW_SEND=true` in their MCP client configuration. That
+# means a default install — without the env flag — never sees
+# "this app can send mail as you" in the consent screen, even though
+# the app registration permits it.
+#
+# Why register-but-don't-default-request: that's the tradeoff of
+# Option B from the v0.3 design discussion. We give power users a
+# clean opt-in path (they don't need a BYO Entra app) while keeping
+# the default consent surface drafts-only. The website privacy +
+# terms pages document this design explicitly.
 
 red()   { printf '\033[0;31m%s\033[0m\n' "$*"; }
 green() { printf '\033[0;32m%s\033[0m\n' "$*"; }
@@ -79,6 +94,7 @@ else
         "resourceAccess": [
             {"id": "${SCOPE_MAIL_READ}",         "type": "Scope"},
             {"id": "${SCOPE_MAIL_READWRITE}",    "type": "Scope"},
+            {"id": "${SCOPE_MAIL_SEND}",         "type": "Scope"},
             {"id": "${SCOPE_CALENDARS_READ}",    "type": "Scope"},
             {"id": "${SCOPE_CALENDARS_READWRITE}","type": "Scope"},
             {"id": "${SCOPE_USER_READ}",         "type": "Scope"},
@@ -137,6 +153,11 @@ green "  published release."
 green "==================================================================="
 
 yellow ""
-yellow "  Note: 'Mail.Send' is intentionally NOT in the permission list."
-yellow "  This server's defining design constraint is 'drafts only,"
-yellow "  send is human-only'. Do not add Mail.Send."
+yellow "  Note: 'Mail.Send' IS in the permission list (v0.3+) but is"
+yellow "  NOT requested by the runtime auth flow unless the end user"
+yellow "  sets OUTLOOK_ALLOW_SEND=true in their MCP client config."
+yellow "  Default installs see a drafts-only consent screen; the"
+yellow "  Mail.Send opt-in surfaces explicitly in the consent prompt"
+yellow "  when the user activates it. The agent never auto-sends —"
+yellow "  ol_email_send_draft requires an explicit per-draft tool"
+yellow "  call AFTER the human has reviewed the draft in Outlook."
