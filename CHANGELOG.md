@@ -8,7 +8,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Tracked in the v0.2 backlog (drafts) — see [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
+Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
+
+## [v0.3.0] — 2026-05-08
+
+First release after v0.1.0, bundling the v0.2 draft surface and the v0.3 login + send opt-in.
+
+### Added — drafts (v0.2 milestone, never separately released)
+
+- **`ol_email_create_draft(to, subject, body?, body_html?, cc?, bcc?)`** — creates a draft in the user's Drafts folder. `body` is Markdown (rendered via safe-mode `mistune`); `body_html` is raw HTML, mutually exclusive with `body`. Records the draft in the per-profile registry. Annotations: `readOnlyHint=False`, `destructiveHint=False` (drafts append, don't overwrite).
+- **`ol_email_update_draft(draft_id, …)`** — PATCH `/me/messages/{id}`. **Defensive**: only mutates drafts in this profile's registry — hand-typed drafts in Outlook are off-limits, raising `DraftNotOwnedError` before any Graph call. `subject` / `body` / `body_html` use `None` = leave unchanged. `to` / `cc` / `bcc` use `None` = leave unchanged, `[]` = clear, `[…]` = set.
+- **`ol_email_list_drafts(profile_only=True)`** — lists drafts. `profile_only=True` (default) is a pure registry read with no Graph call. `profile_only=False` round-trips Graph and overlays a `created_by_this_profile` flag per entry so the agent knows which it owns.
+- **`ol_email_discard_draft(draft_id)`** — DELETE `/me/messages/{id}`. Same registry-defensive shape. 404 from Graph (already gone) is treated as success and the registry entry is cleaned up. Idempotent.
+- **`ol_calendar_create_event_draft(subject, start, end, attendees?, body?, body_html?, location?, time_zone?)`** — POST `/me/events` with `responseRequested=false` so Microsoft Graph never auto-emails attendees. Conflict detection per [spike § 3](docs/spikes/2026-05-08-v02-drafts-spikes.md): warn-and-create — the draft IS created on overlap; the response carries a `warnings` array.
+- **`ol_calendar_discard_event_draft(event_id)`** — DELETE `/me/events/{id}`, same defensive + 404-as-success shape as the email discard.
+- **Markdown → HTML safe-mode renderer** (`outlook_mcp/markdown.py`) using `mistune>=3` with `escape=True`. `javascript:` link schemes are dropped; inline HTML is escaped. Used by `ol_email_create_draft` / `ol_email_update_draft` / `ol_calendar_create_event_draft` for `body=` Markdown input.
+- **`User-Agent: mcp-server-outlook/<version>` header** on every Microsoft Graph request. Diagnostic trail aside from the `ClientAppId` / `AppDisplayName` audit-log attribution.
+- **Drafts opt-in via `OUTLOOK_ALLOW_DRAFTS=true`.** Without the env flag, none of the draft tools are registered — same posture as the v0.1 read-only default.
+
+### Added — MCP-tool login (v0.3 milestone)
+
+- **Adopted [`mcp-microsoft-graph-auth>=0.1.1`](https://pypi.org/project/mcp-microsoft-graph-auth/)** as a runtime dependency. The auth primitives (Device Code flow, token store backends, service-principal mode, `LoginSession` + `LoginSessionRegistry`) now come from the shared library; `outlook_mcp/auth/` is a thin shim supplying Outlook-specific defaults (client_id, scopes, env-var prefix).
+- **`ol_login_begin(force=False)`** — async MCP tool that drives the OAuth Device Code flow without leaving the agent dialogue. Initiates the flow, blocks until terminal status (success / expired / failed), persists the token via the configured TokenStore on success, populates the per-profile UPN cache. **Idempotent**: a non-expired pending session is joined, not duplicated. `force=True` cancels the in-flight session and starts fresh — replaces a separate `_cancel` tool. **Streams MCP progress notifications** (`time_remaining_s` countdown) when the calling client advertises the progress capability.
+- **`ol_login_status()`** — three-state status tool with **active-probe semantics**: a user who logged in via the CLI hours / days ago shows as `signed_in`, NOT `none`. The check tries the configured TokenStore (with silent refresh) and falls through to the in-process `LoginSessionRegistry` only when no token is obtainable. Three states: `signed_in` (with `signed_in_user_upn`), `pending` (with `user_code` + `verification_url` + `time_remaining_s`), `none` (with optional `error` from a previous failed/expired/cancelled session).
+- **UX guidance baked into both tools' MCP descriptions**: render `user_code` first in its own code block (no labels, no whitespace) and `verification_url` second as a plain auto-link (not in a code block). Minimises app-switching on mobile clients.
+- **`ol_logout` is intentionally NOT exposed** as an MCP tool. Agent-driven logout is a footgun. CLI `mcp-server-outlook logout` stays for human-initiated use.
+
+### Added — opt-in send (v0.3, "Option B")
+
+- **`OUTLOOK_ALLOW_SEND=true` env flag** opts the deployment into a separate `ol_email_send_draft(draft_id)` tool AND extends the OAuth scope request to include `Mail.Send`. The default install does NOT request `Mail.Send`; the consent screen stays drafts-only out of the box.
+- **`ol_email_send_draft(draft_id)`** — wraps `POST /me/messages/{id}/send`. Registry-defensive: only sends drafts this profile created (i.e. drafts the agent itself drafted via `ol_email_create_draft` / `ol_email_update_draft`, which the human can review in Outlook between draft and send). Annotations: `destructiveHint=True`, `idempotentHint=False`. The agent never autonomously sends — every send requires an explicit per-draft tool call.
+- **Lazy scope resolver** (`outlook_mcp/auth/flow.py:resolve_scopes`) computes the OAuth scope set at request time, appending `Mail.Send` only when `OUTLOOK_ALLOW_SEND` is truthy. Backwards-compat alias `DEFAULT_SCOPES` kept for callers reading at module load.
+- **Entra app updated**: `Mail.Send` added to the registered permission list of the multi-tenant app `mcp-server-outlook` (appId `5df367d9-…`). Tenant-wide admin consent granted in the XMV tenant. Privacy + terms pages on `xmv.de` documented to reflect the opt-in posture (drafts-only by default, opt-in for power users, never autonomous send).
+
+### Changed
+
+- Authentication primitives moved out to the shared library. Existing `outlook_mcp.auth` imports still work — the public API surface is preserved via re-exports.
+- `tests/unit/test_server.py:test_no_send_tool_exists_anywhere` renamed to `test_no_send_tool_in_default_config` — the invariant now applies only to the default config; the explicit-opt-in path is excepted.
+- README "Safety model" section grew from 3 layers to 4: send opt-in is its own layer between drafts and never-autonomous-send.
+
+### Documentation
+
+- New **`docs/spikes/2026-05-08-v02-drafts-spikes.md`** records the v0.2 design decisions (one Entra app vs two, audit attribution, calendar conflict warn-and-create, Markdown body format) plus a Revision 2026-05-08 § 1 supplement documenting the v0.3 move from "Mail.Send absent" to "Mail.Send registered, lazy-requested".
+- New README sections: "Login from an MCP client" (the agent-driven flow), "Sending: opt-in via OUTLOOK_ALLOW_SEND".
+- `docs/app-concept.md` "Login UX" section replaces the original 4-tool RFC with the agreed 2-tool design + an explicit "what changed from the RFC" header.
+- `CLAUDE.md` "The never-auto-send rule" rewritten in three layers (default install never sends → opt-in is two-step → no autonomous send even with opt-in).
+
+### Tests
+
+- 312 unit + 1 integration green; +165 tests added across the v0.2 + v0.3 surface.
+- Harness layer continues to exercise `GET /me` against real Microsoft Graph in CI; v0.3 send-tool harness gated behind `OUTLOOK_HARNESS_ALLOW_SEND_TEST=true` for opt-in verification.
+
+### Known limitations (documented)
+
+- Pending login sessions are in-process state. If the MCP server restarts mid-flow, the session is lost; the agent calls `ol_login_begin` again. Microsoft cleans up the abandoned device code automatically.
+- The shared lib's TokenStore implementations do NOT file-lock writes. Concurrent CLI login + tool login on the same profile resolves as "last writer wins". Documented; tracked upstream as [`mcp-microsoft-graph-auth#15`](https://github.com/XMV-Solutions-GmbH/mcp-microsoft-graph-auth/issues/15).
 
 ## [v0.1.0] — 2026-05-08
 
@@ -30,5 +84,6 @@ Tracked in the v0.2 backlog (drafts) — see [GitHub Issues](https://github.com/
 - CI: lint + test + harness jobs in GitHub Actions on every push to `main` and intra-repo PR. Branch protection on `main` requires `lint` + `test` to be green and CODEOWNERS approval.
 - Release pipeline: tag-driven OIDC Trusted-Publisher PyPI publish (`mcp-server-outlook`).
 
-[Unreleased]: https://github.com/XMV-Solutions-GmbH/outlook-mcp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/XMV-Solutions-GmbH/outlook-mcp/compare/v0.3.0...HEAD
+[v0.3.0]: https://github.com/XMV-Solutions-GmbH/outlook-mcp/compare/v0.1.0...v0.3.0
 [v0.1.0]: https://github.com/XMV-Solutions-GmbH/outlook-mcp/releases/tag/v0.1.0
