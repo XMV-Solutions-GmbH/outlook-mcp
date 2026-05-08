@@ -129,6 +129,77 @@ ol_calendar_discard_event_draft(event_id)
 
 ---
 
+## Login UX from MCP clients (proposal — v0.2 candidate)
+
+> **Why this section exists:** the v0.1 login is a CLI subcommand (`uvx mcp-server-outlook login --profile <name>`). That works for users with shell access, but it forces an MCP client to either (a) shell out and parse stdout, or (b) tell the human to open a separate terminal. Both are awkward. A nicer pattern is to expose login as an MCP tool — non-blocking, structured, multi-profile-aware — so any MCP client can drive the flow without leaving the agent dialogue.
+
+### Design goal
+
+From the AI agent's point of view, the login flow should look like any other tool sequence:
+
+1. Agent calls `ol_login_begin(profile=…)` → receives a structured response with a `verification_url` and a `user_code`.
+2. Agent surfaces those to the human: "Open this URL, enter this code."
+3. Conversation continues. Server keeps polling Microsoft Identity in the background.
+4. Before the next sensitive call (or whenever the agent feels like it, or when the human says "I'm in"), agent calls `ol_login_status(profile=…)` → `pending | success | expired | failed`. If `success`, proceed.
+
+No shell-out. No stdout parsing. No separate terminal. Works for headless CLI Claude Code, browser-based MCP clients, and mobile-app clients alike.
+
+### Tool surface (proposed)
+
+```text
+ol_login_begin(profile?, force?)
+    → { session_id, verification_url, user_code, expires_at, status: "pending" }
+    → if a non-expired login session is already in-flight for the profile,
+      returns the existing session (idempotent) unless force=true is set.
+
+ol_login_status(profile?)
+    → { status: "pending" | "success" | "expired" | "failed",
+        time_remaining_s?, error?: { code, message }, signed_in_user_upn? }
+    → idempotent. Once status reaches success/failed/expired, returns the same
+      terminal response until ol_login_begin is called again.
+
+ol_login_cancel(profile?)
+    → { cancelled: bool }
+    → kills a pending poll without writing a token. Safe no-op if no session exists.
+
+ol_logout(profile?)
+    → { logged_out: bool }
+    → MCP-tool equivalent of the existing CLI logout. Removes cached credentials.
+```
+
+All four are read-only with respect to mailbox state. They mutate only the local token cache and the in-process login session registry.
+
+### Server-side mechanics
+
+- Each `ol_login_begin` allocates a `LoginSession` dataclass kept in an in-process dict keyed by `profile`. Fields: `session_id` (uuid4), `device_code` (server-only, never returned to client), `user_code`, `verification_url`, `expires_at`, `status`, `signed_in_user_upn`, `error`, `asyncio_task` handle.
+- The asyncio task polls Microsoft Identity's `oauth2/v2.0/token` endpoint at the cadence the device-code response specifies. On success: writes token to keyring/file (same path as the CLI login uses), sets `status=success`. On expiry: sets `status=expired`.
+- `ol_login_status` reads the dict — no Graph call, sub-millisecond.
+- Session-state is process-local. If the MCP server restarts mid-flow, pending sessions are lost. The agent should detect this via a missing session and call `ol_login_begin` again. A persistence layer (file under `~/.cache/outlook-mcp/<profile>/login_session.json`) is a v0.3 nice-to-have, not v0.2 must-have.
+
+### Concurrent / repeat calls
+
+- Two `ol_login_begin` calls for the same profile within the device-code window: return the same in-flight session, do **not** start a second poller. This avoids forcing the human to use two codes and leaking poll budget.
+- `force=true` allows explicitly starting fresh — useful if the human accidentally let the code expire and wants a new one without waiting for the old one to expire.
+- Two clients (e.g. CLI `login` AND `ol_login_begin`) trying simultaneously: file-lock on the token cache path. Loser gets `failed` with `error.code = "concurrent_login_attempt"` and a message pointing at the holder.
+
+### Optional: progress notifications during `ol_login_begin`
+
+If the calling MCP client supports MCP progress notifications (capability flag), the server can stream periodic `time_remaining` updates while the human works through the browser. Clients that don't support progress just see the initial response and have to call `ol_login_status` themselves. This keeps the contract simple — progress is a bonus channel, not load-bearing.
+
+### Backward compatibility
+
+- The CLI `login` and `logout` subcommands stay. They are documented as the "manual" path for users who prefer running auth out of band, and as a fallback for environments where the MCP-tool path can't be taken.
+- The token cache format is identical between CLI-login and tool-login. A user can `uvx mcp-server-outlook login --profile foo` once and immediately use the MCP server in Claude Code without re-authing.
+- For sister project `mcp-server-sharepoint`: same pattern recommended (`sp_login_begin` / `sp_login_status` / `sp_login_cancel` / `sp_logout`). If the underlying auth helpers are factored into a shared library at some point, the implementation can be a single class reused across both servers.
+
+### Why this matters
+
+The current CLI-only path leaks a usability cliff: agents that can shell out (Claude Code with Bash + run_in_background) can paper over it; agents that can't (web-based or mobile MCP clients, locked-down dev sandboxes) hit a wall. Making login a first-class MCP tool removes the cliff and makes the server feel native to the protocol.
+
+It also fits the operator-workbench model where multiple tenants live side-by-side: `ol_login_begin(profile="anqer")` and `ol_login_begin(profile="customer-x")` are two ergonomic calls instead of two terminal sessions.
+
+---
+
 ## Authentication
 
 **OAuth 2.0 Device Code Flow** against Microsoft Identity. Same shape as `mcp-server-sharepoint`:
