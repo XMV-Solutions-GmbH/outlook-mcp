@@ -25,8 +25,8 @@ from outlook_mcp.auth.store import (
     KeyringTokenStore,
     NoUsableTokenStoreError,
     PlainFileTokenStore,
-    _is_real_keyring_backend,
     get_token_store,
+    is_real_keyring_backend,
 )
 
 # ---------------------------------------------------------------------
@@ -145,13 +145,17 @@ def test_file_wrong_passphrase_rejected(tmp_path: Path, monkeypatch: pytest.Monk
         EncryptedFileTokenStore(base_dir=tmp_path).get("profile-a")
 
 
-def test_file_no_passphrase_set_raises_on_use(
+def test_file_no_passphrase_raises_on_construction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Behaviour change after switching to mcp-microsoft-graph-auth: empty
+    passphrase raises at construction time (eager validation), not on
+    first use. Catches misconfigured CI faster — the error fires when
+    `get_token_store()` picks the encrypted backend, not on the first
+    later token write."""
     monkeypatch.delenv("OUTLOOK_TOKEN_PASSPHRASE", raising=False)
-    store = EncryptedFileTokenStore(base_dir=tmp_path)
     with pytest.raises(NoUsableTokenStoreError, match="OUTLOOK_TOKEN_PASSPHRASE"):
-        store.set("profile-a", b"x")
+        EncryptedFileTokenStore(base_dir=tmp_path)
 
 
 def test_file_permissions_owner_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -220,12 +224,12 @@ def test_plain_file_permissions_owner_only(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------
-# _is_real_keyring_backend
+# is_real_keyring_backend
 # ---------------------------------------------------------------------
 
 
 def test_is_real_keyring_rejects_fail_backend() -> None:
-    assert _is_real_keyring_backend(keyring.backends.fail.Keyring()) is False
+    assert is_real_keyring_backend(keyring.backends.fail.Keyring()) is False
 
 
 def test_is_real_keyring_rejects_plaintext_name() -> None:
@@ -241,7 +245,7 @@ def test_is_real_keyring_rejects_plaintext_name() -> None:
         def delete_password(self, service: str, username: str) -> None:
             pass
 
-    assert _is_real_keyring_backend(PlaintextKeyring()) is False
+    assert is_real_keyring_backend(PlaintextKeyring()) is False
 
 
 def test_is_real_keyring_accepts_other_backend() -> None:
@@ -257,7 +261,7 @@ def test_is_real_keyring_accepts_other_backend() -> None:
         def delete_password(self, service: str, username: str) -> None:
             pass
 
-    assert _is_real_keyring_backend(FakeSecretService()) is True
+    assert is_real_keyring_backend(FakeSecretService()) is True
 
 
 # ---------------------------------------------------------------------
