@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
 
+## [v0.3.1] — 2026-05-08
+
+Patch fix for the v0.3.0 MCP-tool login flow.
+
+### Fixed
+
+- **`ol_login_begin` is now non-blocking.** The v0.3.0 implementation awaited the polling task before returning, so MCP clients that don't render progress notifications saw an empty response with no `user_code` and no `verification_url` until the device code expired — the user couldn't enter the code because they couldn't see it. The tool now returns immediately with `status="pending"` plus the user-facing fields after spawning the polling task in the background; the agent polls `ol_login_status` until the state flips to `signed_in` (or to a terminal `expired` / `failed`). Matches the canonical RFC design and the sister project's `sp_login_begin` shape.
+- `force=True` now removes the cancelled session from the registry before atomic-inserting the replacement, eliminating a brief window where two sessions for the same profile could coexist.
+
+### Removed
+
+- Progress notifications during the poll loop. With the non-blocking design the tool returns before polling begins, so progress events have no synchronous return path to attach to. The agent uses `ol_login_status` for state changes instead — same end-user effect, simpler lifecycle.
+
 ## [v0.3.0] — 2026-05-08
 
 First release after v0.1.0, bundling the v0.2 draft surface and the v0.3 login + send opt-in.

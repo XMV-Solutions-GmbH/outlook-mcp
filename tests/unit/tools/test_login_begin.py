@@ -3,10 +3,23 @@
 # SPDX-FileContributor: David Koller <david.koller@xmv.de>
 """Unit tests for ol_login_begin.
 
+The tool is **non-blocking**: a call returns immediately with
+`status="pending"` plus the user-facing fields (`user_code`,
+`verification_url`), while a background asyncio task drives the
+device-code poll loop to a terminal state. Tests therefore split into
+two phases:
+
+1. Assert what the synchronous return value looks like (pending +
+   user_code + url + no device_code leak).
+2. Where the test is about a terminal outcome (success / failed /
+   expired / token-store error / UPN extraction), `await session.task`
+   first, then assert against the now-mutated `LoginSession` and any
+   side effects (token on disk, UPN cache).
+
 Pins:
 
 - Happy path: device-code request → poll succeeds → token written →
-  session marked `success` → UPN cached → public_view shape returned.
+  session marked `success` → UPN cached.
 - Idempotent: a second call while pending returns the existing
   session, NOT a new one. Polling task is started exactly once.
 - `force=True`: cancels in-flight session and starts fresh.
@@ -14,8 +27,6 @@ Pins:
   expired_token → `expired`, unexpected exception → `failed` with
   message; in all cases token is NOT persisted.
 - Token-store persistence failure → status `failed`, agent must retry.
-- Progress notifications: emitted via Context when client advertises
-  capability, silently skipped otherwise.
 - Concurrent same-profile login_begin calls do not corrupt the
   registry.
 - public_view does NOT leak `device_code` (the polling secret).
@@ -23,6 +34,7 @@ Pins:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -88,6 +100,19 @@ def _success_token_json() -> dict[str, Any]:
     }
 
 
+async def _await_task(profile: str, *, timeout: float = 5.0) -> LoginSession:
+    """Drain the background polling task for `profile` and return the
+    (now mutated) `LoginSession`. Tests call this when they need to
+    assert a terminal state — login_begin itself returns while polling
+    is still in flight."""
+    session = get_login_session_registry().get(profile)
+    assert session is not None, f"No session registered for {profile!r}"
+    task = session.task
+    if task is not None and not task.done():
+        await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+    return session
+
+
 # ---------------------------------------------------------------------
 # Happy path
 # ---------------------------------------------------------------------
@@ -101,13 +126,19 @@ async def test_login_begin_happy_path() -> None:
 
     result = await login_begin(profile="default")
 
-    assert result["status"] == "success"
-    assert result["signed_in_user_upn"] == "anna@xmv.de"
+    # Non-blocking: returns pending immediately with the user-facing
+    # fields the agent needs to surface.
+    assert result["status"] == "pending"
     assert result["user_code"] == "ABCD-EFGH"
     assert result["verification_url"] == "https://microsoft.com/devicelogin"
-    # device_code MUST NOT leak
+    # device_code MUST NOT leak even on the synchronous return.
     assert "device_code" not in result
-    # UPN cached for downstream login_status calls
+
+    # Drain the polling task — now the terminal state is observable.
+    session = await _await_task("default")
+    assert session.status == "success"
+    assert session.signed_in_user_upn == "anna@xmv.de"
+    # UPN cached for downstream login_status calls.
     assert cached_upn("default") == "anna@xmv.de"
 
 
@@ -120,6 +151,8 @@ async def test_login_begin_persists_token_to_store(_redirect_token_store) -> Non
     respx.get(ME_URL).respond(json={"userPrincipalName": "x@x.de"})
 
     await login_begin(profile="default")
+    await _await_task("default")
+
     persisted = (_redirect_token_store / "default" / "token.json").read_text()
     cached = CachedToken.from_json(persisted)
     assert cached.access_token == "AT-final"
@@ -133,9 +166,8 @@ async def test_login_begin_session_in_registry_after_success() -> None:
     respx.get(ME_URL).respond(json={"userPrincipalName": "x@x.de"})
 
     await login_begin(profile="default")
+    session = await _await_task("default")
 
-    session = get_login_session_registry().get("default")
-    assert session is not None
     assert session.status == "success"
     assert session.signed_in_user_upn == "x@x.de"
 
@@ -166,15 +198,15 @@ async def test_login_begin_returns_existing_pending_session_idempotent() -> None
     )
     get_login_session_registry().put(existing)
 
-    # No outbound HTTP should fire — there's no polling task
-    # because we set task=None on the seeded session, so
-    # _await_terminal returns immediately with the public_view.
+    # No outbound HTTP should fire — the existing pending session is
+    # returned untouched, no new device-code flow starts.
     with respx.mock(base_url="https://login.microsoftonline.com") as router:
         result = await login_begin(profile="default")
         assert not router.calls, "No new device code flow should start"
 
     assert result["session_id"] == "existing-sid"
     assert result["user_code"] == "EXIST-CODE"
+    assert result["status"] == "pending"
 
 
 @respx.mock
@@ -205,10 +237,17 @@ async def test_login_begin_force_cancels_pending_and_starts_fresh() -> None:
     respx.get(ME_URL).respond(json={"userPrincipalName": "x@x.de"})
 
     result = await login_begin(profile="default", force=True)
+    assert result["status"] == "pending"
     assert result["user_code"] == "NEW-CODE"
     assert result["session_id"] != "old-sid"
-    # Old session was marked cancelled
+    # Old session was marked cancelled.
     assert old.status == "cancelled"
+
+    # Drain the new session's polling task so the test leaves no
+    # background work behind.
+    new_session = await _await_task("default")
+    assert new_session.status == "success"
+    assert new_session.session_id != "old-sid"
 
 
 # ---------------------------------------------------------------------
@@ -221,10 +260,13 @@ async def test_login_begin_user_denies_consent_marks_failed() -> None:
     respx.post(DEVICE_CODE_URL).respond(json=_device_code_response_json())
     respx.post(TOKEN_URL).respond(400, json={"error": "access_denied"})
 
-    result = await login_begin(profile="default")
-    assert result["status"] == "failed"
-    assert result["error"] is not None
-    assert result["error"]["code"] == "access_denied"
+    pending = await login_begin(profile="default")
+    assert pending["status"] == "pending"
+
+    session = await _await_task("default")
+    assert session.status == "failed"
+    assert session.error is not None
+    assert session.error["code"] == "access_denied"
 
 
 @respx.mock
@@ -232,10 +274,13 @@ async def test_login_begin_device_code_expired_marks_expired() -> None:
     respx.post(DEVICE_CODE_URL).respond(json=_device_code_response_json())
     respx.post(TOKEN_URL).respond(400, json={"error": "expired_token"})
 
-    result = await login_begin(profile="default")
-    assert result["status"] == "expired"
-    assert result["error"] is not None
-    assert result["error"]["code"] == "expired_token"
+    pending = await login_begin(profile="default")
+    assert pending["status"] == "pending"
+
+    session = await _await_task("default")
+    assert session.status == "expired"
+    assert session.error is not None
+    assert session.error["code"] == "expired_token"
 
 
 @respx.mock
@@ -263,11 +308,12 @@ async def test_login_begin_token_store_failure_marks_failed(
         lambda: _FailingStore(),
     )
 
-    result = await login_begin(profile="default")
-    assert result["status"] == "failed"
-    assert result["error"] is not None
-    assert result["error"]["code"] == "token_store_failed"
-    assert "disk full" in result["error"]["message"]
+    await login_begin(profile="default")
+    session = await _await_task("default")
+    assert session.status == "failed"
+    assert session.error is not None
+    assert session.error["code"] == "token_store_failed"
+    assert "disk full" in session.error["message"]
 
 
 @respx.mock
@@ -279,82 +325,30 @@ async def test_login_begin_does_not_persist_token_on_failure(
     respx.post(TOKEN_URL).respond(400, json={"error": "access_denied"})
 
     await login_begin(profile="default")
+    await _await_task("default")
     assert not (_redirect_token_store / "default" / "token.json").exists()
 
 
 # ---------------------------------------------------------------------
-# Progress notifications
+# ctx parameter is accepted (forward-compat) but currently unused
 # ---------------------------------------------------------------------
-
-
-class _FakeContext:
-    """Minimal stand-in for FastMCP's Context that records progress calls."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-
-    async def report_progress(
-        self,
-        progress: float,
-        total: float | None = None,
-        message: str | None = None,
-    ) -> None:
-        self.calls.append({"progress": progress, "total": total, "message": message})
-
-
-@respx.mock
-async def test_login_begin_emits_at_least_one_progress_notification() -> None:
-    """When ctx is provided, at least one progress event fires
-    before the polling task settles. Real values (elapsed,
-    time_remaining) checked separately."""
-    respx.post(DEVICE_CODE_URL).respond(
-        json=_device_code_response_json(interval=1),
-    )
-    respx.post(TOKEN_URL).respond(200, json=_success_token_json())
-    respx.get(ME_URL).respond(json={"userPrincipalName": "x@x.de"})
-
-    ctx = _FakeContext()
-    await login_begin(profile="default", ctx=ctx)  # type: ignore[arg-type]
-
-    # At least one progress notification was emitted.
-    assert ctx.calls, "expected at least one progress notification"
-    msg = ctx.calls[0]["message"]
-    assert msg is not None
-    assert "remaining" in msg.lower()
-
-
-@respx.mock
-async def test_login_begin_handles_progress_emit_failure_gracefully() -> None:
-    """If `report_progress` raises (e.g. client closed the
-    connection), the tool must still complete normally — progress
-    is a bonus channel."""
-    respx.post(DEVICE_CODE_URL).respond(json=_device_code_response_json())
-    respx.post(TOKEN_URL).respond(200, json=_success_token_json())
-    respx.get(ME_URL).respond(json={"userPrincipalName": "x@x.de"})
-
-    class _BrokenContext:
-        async def report_progress(
-            self,
-            progress: float,
-            total: float | None = None,
-            message: str | None = None,
-        ) -> None:
-            raise RuntimeError("client closed the channel")
-
-    result = await login_begin(profile="default", ctx=_BrokenContext())  # type: ignore[arg-type]
-    assert result["status"] == "success"
 
 
 @respx.mock
 async def test_login_begin_works_without_ctx() -> None:
-    """ctx=None (no client capability) — tool still works, just
-    no progress notifications."""
+    """ctx=None — tool still works (ctx is reserved for future
+    progress-notification work but is unused in the non-blocking
+    design; the agent polls ol_login_status instead)."""
     respx.post(DEVICE_CODE_URL).respond(json=_device_code_response_json())
     respx.post(TOKEN_URL).respond(200, json=_success_token_json())
     respx.get(ME_URL).respond(json={"userPrincipalName": "x@x.de"})
 
     result = await login_begin(profile="default", ctx=None)
-    assert result["status"] == "success"
+    assert result["status"] == "pending"
+    assert result["user_code"] == "ABCD-EFGH"
+
+    session = await _await_task("default")
+    assert session.status == "success"
 
 
 # ---------------------------------------------------------------------
@@ -370,9 +364,10 @@ async def test_login_begin_signed_in_user_upn_none_when_me_4xx() -> None:
     respx.post(TOKEN_URL).respond(200, json=_success_token_json())
     respx.get(ME_URL).respond(403)
 
-    result = await login_begin(profile="default")
-    assert result["status"] == "success"
-    assert result["signed_in_user_upn"] is None
+    await login_begin(profile="default")
+    session = await _await_task("default")
+    assert session.status == "success"
+    assert session.signed_in_user_upn is None
     assert cached_upn("default") is None
 
 
@@ -382,9 +377,10 @@ async def test_login_begin_signed_in_user_upn_none_when_me_payload_missing_field
     respx.post(TOKEN_URL).respond(200, json=_success_token_json())
     respx.get(ME_URL).respond(json={"id": "abc-no-upn-field"})
 
-    result = await login_begin(profile="default")
-    assert result["status"] == "success"
-    assert result["signed_in_user_upn"] is None
+    await login_begin(profile="default")
+    session = await _await_task("default")
+    assert session.status == "success"
+    assert session.signed_in_user_upn is None
 
 
 # ---------------------------------------------------------------------
@@ -411,6 +407,10 @@ async def test_login_begin_profile_isolation() -> None:
     assert r2["user_code"] == "P2-CODE"
     assert r1["session_id"] != r2["session_id"]
 
+    # Drain both background tasks.
+    await _await_task("profile-1")
+    await _await_task("profile-2")
+
 
 # ---------------------------------------------------------------------
 # device_code never leaks
@@ -428,11 +428,15 @@ async def test_login_begin_response_has_no_device_code_secret() -> None:
 
     result = await login_begin(profile="default")
 
-    # Top-level key not present
+    # Top-level key not present on the synchronous return value.
     assert "device_code" not in result
-    # Defensive: check no nested key matches either
+    # Defensive: check no nested key matches either.
     flat = " ".join(str(v) for v in result.values())
     assert "DC-secret-xyz" not in flat
+
+    # And the device_code is also not exposed via the registry's
+    # public_view — drain the task and re-verify.
+    await _await_task("default")
 
 
 # ---------------------------------------------------------------------
