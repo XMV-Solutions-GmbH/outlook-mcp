@@ -30,6 +30,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from outlook_mcp.auth.flow import send_enabled
 from outlook_mcp.tools.calendar_create_event_draft import (
     create_event_draft as _do_calendar_create_event_draft,
 )
@@ -44,6 +45,7 @@ from outlook_mcp.tools.email_list_drafts import list_drafts as _do_email_list_dr
 from outlook_mcp.tools.email_list_unread import list_unread as _do_email_list_unread
 from outlook_mcp.tools.email_read import read_email as _do_email_read
 from outlook_mcp.tools.email_search import search as _do_email_search
+from outlook_mcp.tools.email_send_draft import send_draft as _do_email_send_draft
 from outlook_mcp.tools.email_update_draft import update_draft as _do_email_update_draft
 from outlook_mcp.tools.status import status as _do_status
 
@@ -446,12 +448,56 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
         _do_calendar_discard_event_draft(event_id, profile=_get_profile())
 
 
+def register_send_tools(mcp_instance: FastMCP) -> None:
+    """Register the send tool. Only invoked when both
+    `OUTLOOK_ALLOW_DRAFTS` AND `OUTLOOK_ALLOW_SEND` are truthy.
+
+    Send is opt-in. The default install does NOT register this tool
+    and does NOT request `Mail.Send` at OAuth time. See
+    `auth/flow.py:resolve_scopes` for the lazy-scope semantic and
+    `docs/spikes/2026-05-08-v02-drafts-spikes.md` § 1 (revised) for
+    the design discussion.
+
+    Even with the opt-in active, the agent never auto-sends. The
+    tool requires a `draft_id` from this profile's DraftRegistry —
+    a draft the human can review in Outlook between the
+    create-draft call and this send call.
+    """
+
+    @mcp_instance.tool(
+        annotations=ToolAnnotations(
+            title="Send Outlook Email Draft",
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=False,
+            openWorldHint=False,
+        ),
+        description=(
+            "Send a draft this MCP profile created. Refuses to send "
+            "drafts not in this profile's draft registry. Sending is "
+            "irreversible — the draft moves from Drafts to Sent Items "
+            "and is delivered to recipients. Only registered when the "
+            "MCP client config sets OUTLOOK_ALLOW_SEND=true (in "
+            "addition to OUTLOOK_ALLOW_DRAFTS=true). The agent does "
+            "NOT send autonomously: the human reviews the draft in "
+            "Outlook after ol_email_create_draft / "
+            "ol_email_update_draft, then asks the agent to call this "
+            "tool with the specific draft_id. Returns "
+            "{draft_id, sent_at}."
+        ),
+    )
+    def ol_email_send_draft(draft_id: str) -> dict[str, Any]:
+        return _do_email_send_draft(draft_id, profile=_get_profile())
+
+
 def _build_server() -> FastMCP:
     """Build and return a FastMCP server with the right tools registered."""
     server = FastMCP("mcp-server-outlook")
     register_read_tools(server)
     if drafts_enabled():
         register_write_tools(server)
+        if send_enabled():
+            register_send_tools(server)
     else:
         # One-line note on stderr so users running uvx interactively
         # see why drafts are absent. Quiet by default to avoid noise
@@ -462,6 +508,15 @@ def _build_server() -> FastMCP:
             "(ol_email_create_draft etc. not registered). "
             "Set OUTLOOK_ALLOW_DRAFTS=true to enable drafts.",
         )
+        if send_enabled():
+            # Send-without-drafts is invalid configuration; warn so the
+            # user knows their flag is doing nothing.
+            logging.getLogger("outlook-mcp").warning(
+                "OUTLOOK_ALLOW_SEND is set but OUTLOOK_ALLOW_DRAFTS is "
+                "not — ol_email_send_draft requires drafts to be "
+                "enabled (you can't send what you can't draft). The "
+                "send tool will NOT be registered.",
+            )
     return server
 
 

@@ -55,13 +55,17 @@ The legacy `docs/todo.md` is a frozen artefact from the OSS template; do not ext
 
 ## The never-auto-send rule
 
-This repo's defining design constraint:
+This repo's defining design constraint, in three layers:
 
-- **No tool exposes `send_email` / `send_invitation` directly.** Sending is exclusively a human action in Outlook. This is structural, not config-flag-able.
-- The agent's reach ends at "draft saved" — drafts land in the user's Outlook drafts folder; the user reviews and sends manually.
-- Required Microsoft Graph scopes deliberately exclude `Mail.Send`. The consent prompt should never read "this app can send mail as you".
+1. **The default install never sends.** Without `OUTLOOK_ALLOW_SEND=true` in the MCP client config, no `ol_email_send_draft` tool is registered AND `Mail.Send` is not in the OAuth scope request. The consent prompt does NOT read "this app can send mail as you" out of the box. This is the compliance posture that lets cautious tenant admins approve the tool.
+2. **Send is opt-in, not auto-on.** Setting `OUTLOOK_ALLOW_SEND=true` is a deliberate per-deployment choice in the MCP client config. The opt-in extends the consent screen — the user has to actively approve `Mail.Send` at the next sign-in.
+3. **No autonomous send, ever.** Even with the opt-in active, the agent never sends mail without explicit instruction. The send tool requires a `draft_id` referencing a draft already in the user's Drafts folder (written by an earlier `ol_email_create_draft` / `ol_email_update_draft` call). The human reviewer reads the draft in Outlook between create and send.
 
-If a future feature request asks for "auto-send when X" — it's the wrong project. Suggest a sister MCP or an external workflow tool. **Do not add `Mail.Send` to the default scopes.**
+**Calendar invitations follow the same shape**: events are created with `responseRequested=false` so Microsoft Graph never auto-emails attendees. There is no `send_invitation` tool; the human clicks Send Invitation in Outlook manually if they want to notify attendees.
+
+If a future feature request asks for "auto-send when X" — say no. The opt-in path covers explicit-send use cases; autonomous-send breaks the audit-trail story this server is built around.
+
+For changes around scope handling: see `auth/flow.py:resolve_scopes()` for the lazy-scope semantic that gates `Mail.Send` on the env flag, and `docs/spikes/2026-05-08-v02-drafts-spikes.md` § 1 (revised) for the design discussion.
 
 ## License & attribution (this project)
 

@@ -241,3 +241,27 @@ else:
 4. **`mistune` integration + `body` / `body_html` split** is part of #8.
 
 This spike closes #9. The four bullets above are recorded as acceptance-criteria checkboxes on #8.
+
+---
+
+## Revision 2026-05-08 — § 1 supplement: opt-in `Mail.Send` for v0.3
+
+**Background.** § 1 above settled v0.2 with `Mail.Send` absent from the XMV-published default Entra app entirely — the strongest possible "we never send" stance. v0.3's design discussion revisited this once a concrete operator workflow appeared that wanted "draft, review, send" inside a single MCP session, without forcing users to register their own BYO Entra app.
+
+**Decision.** Add `Mail.Send` to the registered permission list of the default Entra app, but **request it lazily**: the OAuth scope request includes `Mail.Send` only when `OUTLOOK_ALLOW_SEND=true` is set in the MCP client config. Default installs see a drafts-only consent screen exactly as before.
+
+**Why this preserves the never-auto-send story.** Three mechanisms compose:
+
+1. **The default install never sends.** `OUTLOOK_ALLOW_SEND` unset → no `ol_email_send_draft` tool registered, no `Mail.Send` in the OAuth request, consent screen unchanged. Same posture as v0.2.
+2. **Send is opt-in, not auto-on.** The user has to set the env flag in their `.mcp.json` AND approve the additional `Mail.Send` scope on the next sign-in. Two deliberate steps.
+3. **No autonomous send.** Even with both opt-ins active, `ol_email_send_draft(draft_id)` requires a `draft_id` from the per-profile `DraftRegistry` — meaning a draft this server itself created via an earlier `ol_email_create_draft` / `ol_email_update_draft` call. The human reviewer can read the draft body in Outlook between the create call and the send call.
+
+**Live state.**
+
+- Entra app `5df367d9-…` updated via `az ad app update` (live as of 2026-05-08; commit `5be9d8a` keeps `scripts/bootstrap-azure-app.sh` consistent).
+- Website privacy + terms pages updated to document the opt-in posture: <https://github.com/XMV-Solutions-GmbH/website/pull/2>.
+- `auth/flow.py:resolve_scopes()` implements the lazy-scope semantic. `mcp-microsoft-graph-auth#12` tracks the eventual move of this primitive into the shared lib (deferred until at least one more consumer wants it).
+
+**Unchanged from § 1.** The two-app split between outlook-mcp and sharepoint-mcp stays. Each project retains its own consent surface, its own publisher-info pages, and its own audit boundary.
+
+**Calendar invitations are unchanged.** `ol_calendar_create_event_draft` continues to set `responseRequested=false` so Microsoft Graph never auto-emails attendees regardless of any env flag. There is no `Calendars.Send`-equivalent scope and no plan to add a calendar-side opt-in send tool — the human clicks Send Invitation in Outlook manually if they want attendees notified.

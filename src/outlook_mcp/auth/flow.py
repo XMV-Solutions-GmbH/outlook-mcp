@@ -27,6 +27,7 @@ full rationale.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -46,29 +47,71 @@ from outlook_mcp.auth.tokens import CachedToken
 
 AUTHORITY_BASE = "https://login.microsoftonline.com"
 # XMV-published multi-tenant Entra app registration for mcp-server-outlook.
-# Public client, Device Code flow enabled, delegated scopes only —
-# Mail.Read, Mail.ReadWrite, Calendars.Read, Calendars.ReadWrite,
-# User.Read, offline_access. Notably NOT Mail.Send: drafts only, sends
-# stay a manual action in Outlook. Override via OUTLOOK_CLIENT_ID for
-# tenants with strict app-allowlisting.
+# Public client, Device Code flow enabled. As of v0.3 the registered
+# permission list is: Mail.Read, Mail.ReadWrite, Mail.Send, Calendars.Read,
+# Calendars.ReadWrite, User.Read, offline_access. **Mail.Send is in the
+# registered permission list but is NOT in the default OAuth scope
+# request** — see resolve_scopes() below for the lazy-request semantic.
+# Override via OUTLOOK_CLIENT_ID for tenants with strict app-allowlisting.
 DEFAULT_CLIENT_ID = "5df367d9-4c9b-44fd-9f84-0b4fb1f1268a"
 DEFAULT_AUTHORITY_TENANT = "organizations"
-DEFAULT_SCOPES = (
+
+# Env var that opts the running MCP server into requesting Mail.Send at
+# OAuth time (and registering ol_email_send_draft as an MCP tool). When
+# unset / falsy, the consent screen does NOT include "this app can send
+# mail as you" — the default install is drafts-only. See
+# docs/spikes/2026-05-08-v02-drafts-spikes.md § 1 (revised) for the design
+# discussion.
+ALLOW_SEND_ENV = "OUTLOOK_ALLOW_SEND"
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+
+_BASE_SCOPES: tuple[str, ...] = (
     # Read inbox + calendar (v0.1 minimum)
     "Mail.Read",
     "Calendars.Read",
     # Draft creation / update / discard for v0.2 — gated at the tool
     # surface by OUTLOOK_ALLOW_DRAFTS=true. Mail.ReadWrite covers
     # POST/PATCH/DELETE on /me/messages; Calendars.ReadWrite covers
-    # the same on /me/events. NEITHER includes Mail.Send. The
-    # never-auto-send rule applies at the scope level — the consent
-    # screen does NOT include "this app can send mail as you", and
-    # never will.
+    # the same on /me/events.
     "Mail.ReadWrite",
     "Calendars.ReadWrite",
     "User.Read",
     "offline_access",
 )
+
+
+def send_enabled() -> bool:
+    """True iff `OUTLOOK_ALLOW_SEND` is set to a recognised truthy value.
+
+    Default (unset / empty / anything else): send is NOT enabled. The
+    OAuth scope request omits Mail.Send; the consent screen does not
+    mention "send mail as you"; and the MCP server does not register
+    `ol_email_send_draft` (gated by the same flag in server.py).
+    """
+    return os.environ.get(ALLOW_SEND_ENV, "").strip().lower() in _TRUE_VALUES
+
+
+def resolve_scopes() -> tuple[str, ...]:
+    """Return the OAuth scopes to request at this moment.
+
+    Always includes `_BASE_SCOPES`. Appends `Mail.Send` only when
+    `send_enabled()` is true — this is the load-bearing property that
+    keeps the default install's consent screen drafts-only while
+    permitting an explicit per-deployment opt-in. Resolved at call
+    time, not at module load, so test-time `monkeypatch.setenv`
+    flips behaviour without re-importing.
+    """
+    if send_enabled():
+        return (*_BASE_SCOPES, "Mail.Send")
+    return _BASE_SCOPES
+
+
+# Backwards-compat alias so callers who still import DEFAULT_SCOPES at
+# module load continue to work — they get the un-flagged default. Tests
+# that need to assert on the env-var-aware shape should call
+# `resolve_scopes()` directly.
+DEFAULT_SCOPES = _BASE_SCOPES
+
 DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 
 # Polling cap so a stuck `authorization_pending` response loop can't
