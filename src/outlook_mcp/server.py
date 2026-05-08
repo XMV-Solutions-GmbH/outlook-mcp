@@ -33,6 +33,8 @@ from mcp.types import ToolAnnotations
 from outlook_mcp.tools.calendar_list_events import list_events as _do_calendar_list_events
 from outlook_mcp.tools.calendar_search import search as _do_calendar_search
 from outlook_mcp.tools.email_create_draft import create_draft as _do_email_create_draft
+from outlook_mcp.tools.email_discard_draft import discard_draft as _do_email_discard_draft
+from outlook_mcp.tools.email_list_drafts import list_drafts as _do_email_list_drafts
 from outlook_mcp.tools.email_list_unread import list_unread as _do_email_list_unread
 from outlook_mcp.tools.email_read import read_email as _do_email_read
 from outlook_mcp.tools.email_search import search as _do_email_search
@@ -230,6 +232,35 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
     def ol_status() -> list[dict[str, Any]]:
         return _do_status(profile=_get_profile())
 
+    @mcp_instance.tool(
+        annotations=ToolAnnotations(
+            title="List Outlook Email Drafts",
+            readOnlyHint=True,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+        description=(
+            "List drafts in the user's Drafts folder. With "
+            "`profile_only=True` (default): only drafts this MCP "
+            "profile created (sourced from the local registry, no "
+            "Graph call). With `profile_only=False`: all drafts in "
+            "the Drafts folder via Graph, including hand-typed ones; "
+            "each entry's `created_by_this_profile` flag tells the "
+            "agent whether it owns that draft (i.e. whether "
+            "ol_email_update_draft / ol_email_discard_draft will "
+            "accept the id). Read-only."
+        ),
+    )
+    def ol_email_list_drafts(
+        profile_only: bool = True,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return _do_email_list_drafts(
+            profile_only=profile_only,
+            limit=limit,
+            profile=_get_profile(),
+        )
+
 
 def register_write_tools(mcp_instance: FastMCP) -> None:
     """Register the gated draft-creating tools on `mcp_instance`.
@@ -321,6 +352,26 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
             bcc=bcc,
             profile=_get_profile(),
         )
+
+    @mcp_instance.tool(
+        annotations=ToolAnnotations(
+            title="Discard Outlook Email Draft",
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+        description=(
+            "Delete a draft this MCP profile created. Refuses to "
+            "delete drafts not in this profile's draft registry — "
+            "hand-typed drafts in Outlook are off-limits. Idempotent: "
+            "re-deleting a draft already gone server-side is a "
+            "silent no-op (the registry entry is cleaned up either "
+            "way). Returns no value on success."
+        ),
+    )
+    def ol_email_discard_draft(draft_id: str) -> None:
+        _do_email_discard_draft(draft_id, profile=_get_profile())
 
 
 def _build_server() -> FastMCP:

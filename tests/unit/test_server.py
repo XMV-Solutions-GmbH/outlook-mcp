@@ -63,7 +63,7 @@ def test_drafts_enabled_unset(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------
 
 
-def test_register_read_tools_adds_all_v01_tools() -> None:
+def test_register_read_tools_adds_all_read_tools() -> None:
     server = FastMCP("test-read-only")
     register_read_tools(server)
     names = _list_tool_names(server)
@@ -71,6 +71,7 @@ def test_register_read_tools_adds_all_v01_tools() -> None:
         "ol_email_search",
         "ol_email_list_unread",
         "ol_email_read",
+        "ol_email_list_drafts",
         "ol_calendar_search",
         "ol_calendar_list_events",
         "ol_status",
@@ -151,6 +152,27 @@ def test_register_write_tools_adds_email_update_draft() -> None:
     register_write_tools(server)
     names = _list_tool_names(server)
     assert "ol_email_update_draft" in names
+
+
+def test_register_write_tools_adds_email_discard_draft() -> None:
+    server = FastMCP("test-with-drafts")
+    register_write_tools(server)
+    names = _list_tool_names(server)
+    assert "ol_email_discard_draft" in names
+
+
+def test_discard_draft_tool_is_destructive_and_idempotent() -> None:
+    """DELETE on a draft removes it permanently — destructiveHint=True.
+    Idempotent because re-deleting an already-gone draft is a no-op."""
+    server = FastMCP("test-with-drafts")
+    register_write_tools(server)
+    [discard_tool] = [
+        t for t in asyncio.run(server.list_tools()) if t.name == "ol_email_discard_draft"
+    ]
+    assert discard_tool.annotations is not None
+    assert discard_tool.annotations.readOnlyHint is False
+    assert discard_tool.annotations.destructiveHint is True
+    assert discard_tool.annotations.idempotentHint is True
 
 
 def test_create_draft_tool_is_not_readonly_not_destructive() -> None:
