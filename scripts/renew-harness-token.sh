@@ -91,9 +91,16 @@ green ">> /me round-trip OK"
 echo
 
 blue ">> Step 3/3: Upload token cache as GitHub repo secret ${SECRET_NAME}"
-TOKEN_B64="$(base64 -w0 < "${TOKEN_PATH}")"
-printf '%s' "${TOKEN_B64}" | gh secret set "${SECRET_NAME}" --repo "${REPO}" --body -
-green ">> Secret ${SECRET_NAME} uploaded to ${REPO}."
+# Use a tempfile + stdin redirection rather than a printf | pipe.
+# Empirically, `printf '%s' "$VAR" | gh secret set --body -` produced
+# secrets that GitHub Actions later rejected as "base64: invalid input"
+# (likely a subtle shell-pipe mangling for very long single-line
+# payloads). Stdin redirection is bytes-exact.
+TMPFILE="$(mktemp)"
+trap 'rm -f "${TMPFILE}"' EXIT
+base64 -w0 < "${TOKEN_PATH}" > "${TMPFILE}"
+gh secret set "${SECRET_NAME}" --repo "${REPO}" < "${TMPFILE}"
+green ">> Secret ${SECRET_NAME} uploaded to ${REPO} ($(wc -c < "${TMPFILE}") base64 bytes)."
 echo
 
 green "✓ Done. CI's harness job will use the new token on its next run."
