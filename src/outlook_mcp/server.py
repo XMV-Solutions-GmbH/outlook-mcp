@@ -36,6 +36,7 @@ from outlook_mcp.tools.email_create_draft import create_draft as _do_email_creat
 from outlook_mcp.tools.email_list_unread import list_unread as _do_email_list_unread
 from outlook_mcp.tools.email_read import read_email as _do_email_read
 from outlook_mcp.tools.email_search import search as _do_email_search
+from outlook_mcp.tools.email_update_draft import update_draft as _do_email_update_draft
 from outlook_mcp.tools.status import status as _do_status
 
 PROFILE_ENV = "OUTLOOK_PROFILE"
@@ -276,6 +277,46 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
             subject=subject,
             body=body,
             body_html=body_html,
+            cc=cc,
+            bcc=bcc,
+            profile=_get_profile(),
+        )
+
+    @mcp_instance.tool(
+        annotations=ToolAnnotations(
+            title="Update Outlook Email Draft",
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+        description=(
+            "Patch fields on a draft this MCP profile created. Only "
+            "drafts whose draft_id is in this profile's draft registry "
+            "can be updated — hand-typed drafts in Outlook are off-limits. "
+            "Field semantics: pass `subject` / `body` / `body_html` to "
+            "set; pass None or omit to leave unchanged. `to` / `cc` / "
+            "`bcc`: None = unchanged, [] = clear, non-empty list = set. "
+            "`body` and `body_html` are mutually exclusive per call. "
+            "Returns {draft_id, web_url}. Marked destructive because the "
+            "PATCH overwrites the previous draft state on Graph."
+        ),
+    )
+    def ol_email_update_draft(
+        draft_id: str,
+        subject: str | None = None,
+        body: str | None = None,
+        body_html: str | None = None,
+        to: list[str] | None = None,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return _do_email_update_draft(
+            draft_id,
+            subject=subject,
+            body=body,
+            body_html=body_html,
+            to=to,
             cc=cc,
             bcc=bcc,
             profile=_get_profile(),

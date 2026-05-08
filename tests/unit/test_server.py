@@ -146,6 +146,13 @@ def test_register_write_tools_adds_email_create_draft() -> None:
     assert "ol_email_create_draft" in names
 
 
+def test_register_write_tools_adds_email_update_draft() -> None:
+    server = FastMCP("test-with-drafts")
+    register_write_tools(server)
+    names = _list_tool_names(server)
+    assert "ol_email_update_draft" in names
+
+
 def test_create_draft_tool_is_not_readonly_not_destructive() -> None:
     """Creating a draft mutates the user's mailbox state (a draft
     appears in their Drafts folder), so readOnlyHint=False. It is
@@ -160,6 +167,21 @@ def test_create_draft_tool_is_not_readonly_not_destructive() -> None:
     assert draft_tool.annotations is not None
     assert draft_tool.annotations.readOnlyHint is False
     assert draft_tool.annotations.destructiveHint is False
+
+
+def test_update_draft_tool_is_destructive() -> None:
+    """A PATCH overwrites the previous draft state on Graph, so
+    destructiveHint=True. Idempotent because re-applying the same
+    PATCH yields the same result."""
+    server = FastMCP("test-with-drafts")
+    register_write_tools(server)
+    [update_tool] = [
+        t for t in asyncio.run(server.list_tools()) if t.name == "ol_email_update_draft"
+    ]
+    assert update_tool.annotations is not None
+    assert update_tool.annotations.readOnlyHint is False
+    assert update_tool.annotations.destructiveHint is True
+    assert update_tool.annotations.idempotentHint is True
 
 
 def test_no_send_tool_exists_anywhere() -> None:
