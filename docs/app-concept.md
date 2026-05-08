@@ -309,7 +309,9 @@ Deferred / out of scope:
 
 ## Open questions for the tech spike
 
-1. **Single Entra app or two** — share the multi-tenant client_id with `mcp-server-sharepoint` (one consent prompt covering both surfaces) or keep separate (clearer per-app scopes)? Trade-off: UX vs cleanliness.
-2. **Draft attribution.** Drafts created via Graph appear with the signed-in user's identity. Confirm in audit log that "drafted via mcp-server-outlook user-agent" is visible, so a compliance reviewer can distinguish AI-mediated drafts from hand-typed ones.
-3. **Calendar-conflict detection.** Should `ol_calendar_create_event_draft` refuse to create an event that overlaps an existing busy block, or just warn? Probably warn-and-create.
-4. **Body format** for drafts: HTML vs Markdown vs plain. Probably support both, default Markdown→HTML rendering server-side via a known-safe converter (`mistune` or similar with whitelist).
+> **Resolved 2026-05-08 — see [`docs/spikes/2026-05-08-v02-drafts-spikes.md`](spikes/2026-05-08-v02-drafts-spikes.md).** Summary:
+>
+> 1. **Two Entra apps** (already provisioned). Outlook: `5df367d9-…`. SharePoint: `cb7cf68d-…`. Independent consent, scopes, revocation.
+> 2. **Audit attribution** — automatic via `ClientAppId` + `AppDisplayName`; we additionally set `User-Agent: mcp-server-outlook/<version>` on every Graph request.
+> 3. **Calendar conflict** — warn-and-create. Response carries a `warnings` array; the human reviews in Outlook.
+> 4. **Body format** — Markdown by default, `body_html` opt-in for raw HTML. Conversion server-side via `mistune` in safe mode.
