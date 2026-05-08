@@ -54,8 +54,18 @@ AUTHORITY_BASE = "https://login.microsoftonline.com"
 DEFAULT_CLIENT_ID = "5df367d9-4c9b-44fd-9f84-0b4fb1f1268a"
 DEFAULT_AUTHORITY_TENANT = "organizations"
 DEFAULT_SCOPES = (
+    # Read inbox + calendar (v0.1 minimum)
     "Mail.Read",
     "Calendars.Read",
+    # Draft creation / update / discard for v0.2 — gated at the tool
+    # surface by OUTLOOK_ALLOW_DRAFTS=true. Mail.ReadWrite covers
+    # POST/PATCH/DELETE on /me/messages; Calendars.ReadWrite covers
+    # the same on /me/events. NEITHER includes Mail.Send. The
+    # never-auto-send rule applies at the scope level — the consent
+    # screen does NOT include "this app can send mail as you", and
+    # never will.
+    "Mail.ReadWrite",
+    "Calendars.ReadWrite",
     "User.Read",
     "offline_access",
 )
