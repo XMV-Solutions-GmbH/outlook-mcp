@@ -10,3 +10,10 @@ MD041: false
 
 # Disable table column style rule - we prefer aligned tables for readability
 MD060: false
+
+# Allow duplicate headings under different parents — CHANGELOG.md
+# legitimately has "Added", "Changed", etc. under each version section,
+# and per-question spike docs have "Question", "Rationale" etc. under
+# each numbered question.
+MD024:
+    siblings_only: true
