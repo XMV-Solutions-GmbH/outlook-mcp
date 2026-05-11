@@ -18,6 +18,7 @@ import asyncio
 import pytest
 from mcp.server.fastmcp import FastMCP
 
+from outlook_mcp.auth.flow import OutlookConsentNotConfiguredError
 from outlook_mcp.server import (
     drafts_enabled,
     register_read_tools,
@@ -31,32 +32,71 @@ def _list_tool_names(server: FastMCP) -> set[str]:
     return {t.name for t in asyncio.run(server.list_tools())}
 
 
+def _set_consent(monkeypatch: pytest.MonkeyPatch, drafts: str | None, send: str | None) -> None:
+    """Helper: set / unset the two consent env vars in one go."""
+    for name, value in [("OUTLOOK_ALLOW_DRAFTS", drafts), ("OUTLOOK_ALLOW_SEND", send)]:
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+
+
 # ---------------------------------------------------------------------
-# drafts_enabled — env-var parsing
+# drafts_enabled — strict env-var parsing (v0.4)
 # ---------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("value", ["true", "TRUE", "1", "yes", "YES", "on", "ON"])
-def test_drafts_enabled_truthy(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
-    monkeypatch.setenv("OUTLOOK_ALLOW_DRAFTS", value)
+@pytest.mark.parametrize("value", ["true", "TRUE", " true ", "True"])
+def test_drafts_enabled_true_accepts_case_and_whitespace(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    _set_consent(monkeypatch, drafts=value, send="false")
     assert drafts_enabled() is True
 
 
-@pytest.mark.parametrize("value", ["", "false", "0", "no", "off", "garbage"])
-def test_drafts_enabled_falsy(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
-    monkeypatch.setenv("OUTLOOK_ALLOW_DRAFTS", value)
+@pytest.mark.parametrize("value", ["false", "FALSE", " false "])
+def test_drafts_enabled_false_accepts_case_and_whitespace(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    _set_consent(monkeypatch, drafts=value, send=None)
     assert drafts_enabled() is False
 
 
-def test_drafts_enabled_whitespace_stripped(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The implementation strips + lowercases — whitespace-padded truthy passes."""
-    monkeypatch.setenv("OUTLOOK_ALLOW_DRAFTS", " true ")
-    assert drafts_enabled() is True
+@pytest.mark.parametrize("value", ["1", "yes", "on", "garbage", "", "0", "no", "off"])
+def test_drafts_enabled_strict_rejects_legacy_and_other_values(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """v0.4 breaking change: only exactly 'true' / 'false' accepted.
+    Legacy v0.3 truthy values (1/yes/on) and any other string raise."""
+    _set_consent(monkeypatch, drafts=value, send=None)
+    with pytest.raises(OutlookConsentNotConfiguredError, match="OUTLOOK_ALLOW_DRAFTS"):
+        drafts_enabled()
 
 
-def test_drafts_enabled_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OUTLOOK_ALLOW_DRAFTS", raising=False)
-    assert drafts_enabled() is False
+def test_drafts_enabled_unset_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_consent(monkeypatch, drafts=None, send=None)
+    with pytest.raises(OutlookConsentNotConfiguredError, match="not set"):
+        drafts_enabled()
+
+
+def test_drafts_true_without_send_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When DRAFTS=true, SEND must be explicitly set too."""
+    _set_consent(monkeypatch, drafts="true", send=None)
+    with pytest.raises(OutlookConsentNotConfiguredError, match="OUTLOOK_ALLOW_SEND"):
+        drafts_enabled()
+
+
+def test_drafts_true_send_legacy_truthy_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Legacy truthy value for SEND is rejected just like DRAFTS."""
+    _set_consent(monkeypatch, drafts="true", send="yes")
+    with pytest.raises(OutlookConsentNotConfiguredError, match="OUTLOOK_ALLOW_SEND"):
+        drafts_enabled()
+
+
+def test_drafts_false_skips_send_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When DRAFTS=false, SEND is not checked (it'd be dead config)."""
+    _set_consent(monkeypatch, drafts="false", send=None)
+    assert drafts_enabled() is False  # no exception
 
 
 # ---------------------------------------------------------------------
@@ -120,11 +160,11 @@ def test_read_tools_have_readonly_annotation() -> None:
 # ---------------------------------------------------------------------
 
 
-def test_module_level_server_includes_read_tools_when_drafts_unset(
+def test_module_level_server_includes_read_tools_in_explicit_readonly_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A fresh server constructed without the env var has the v0.1 read tools."""
-    monkeypatch.delenv("OUTLOOK_ALLOW_DRAFTS", raising=False)
+    """Explicit DRAFTS=false → read-only mode; read tools registered."""
+    _set_consent(monkeypatch, drafts="false", send=None)
     from outlook_mcp.server import _build_server
 
     server = _build_server()
@@ -133,12 +173,11 @@ def test_module_level_server_includes_read_tools_when_drafts_unset(
     assert "ol_status" in names
 
 
-def test_module_level_server_with_drafts_set_registers_write_tools(
+def test_module_level_server_with_drafts_true_registers_write_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """OUTLOOK_ALLOW_DRAFTS=true causes the gated draft tools to register
-    alongside the read tools."""
-    monkeypatch.setenv("OUTLOOK_ALLOW_DRAFTS", "true")
+    """DRAFTS=true + SEND=false: the draft tools register alongside read."""
+    _set_consent(monkeypatch, drafts="true", send="false")
     from outlook_mcp.server import _build_server
 
     server = _build_server()
@@ -148,16 +187,38 @@ def test_module_level_server_with_drafts_set_registers_write_tools(
     assert "ol_email_search" in names
 
 
-def test_module_level_server_with_drafts_unset_omits_write_tools(
+def test_module_level_server_drafts_false_omits_write_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Default (read-only) mode: draft tools are NOT visible."""
-    monkeypatch.delenv("OUTLOOK_ALLOW_DRAFTS", raising=False)
+    """DRAFTS=false: no draft tools."""
+    _set_consent(monkeypatch, drafts="false", send=None)
     from outlook_mcp.server import _build_server
 
     server = _build_server()
     names = _list_tool_names(server)
     assert "ol_email_create_draft" not in names
+
+
+def test_module_level_server_refuses_when_consent_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_build_server raises OutlookConsentNotConfiguredError when DRAFTS unset."""
+    _set_consent(monkeypatch, drafts=None, send=None)
+    from outlook_mcp.server import _build_server
+
+    with pytest.raises(OutlookConsentNotConfiguredError, match="not set"):
+        _build_server()
+
+
+def test_module_level_server_refuses_when_drafts_true_send_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_build_server raises when DRAFTS=true but SEND unset."""
+    _set_consent(monkeypatch, drafts="true", send=None)
+    from outlook_mcp.server import _build_server
+
+    with pytest.raises(OutlookConsentNotConfiguredError, match="OUTLOOK_ALLOW_SEND"):
+        _build_server()
 
 
 # ---------------------------------------------------------------------
@@ -308,13 +369,11 @@ def test_send_draft_tool_is_destructive_not_idempotent() -> None:
     assert send_tool.annotations.idempotentHint is False
 
 
-def test_module_level_server_registers_send_when_both_flags_truthy(
+def test_module_level_server_registers_send_when_both_flags_true(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """OUTLOOK_ALLOW_DRAFTS=true AND OUTLOOK_ALLOW_SEND=true →
-    ol_email_send_draft is in the registered tool surface."""
-    monkeypatch.setenv("OUTLOOK_ALLOW_DRAFTS", "true")
-    monkeypatch.setenv("OUTLOOK_ALLOW_SEND", "true")
+    """DRAFTS=true + SEND=true → ol_email_send_draft is registered."""
+    _set_consent(monkeypatch, drafts="true", send="true")
     from outlook_mcp.server import _build_server
 
     server = _build_server()
@@ -322,33 +381,14 @@ def test_module_level_server_registers_send_when_both_flags_truthy(
     assert "ol_email_send_draft" in names
 
 
-def test_module_level_server_omits_send_when_only_drafts_flag_truthy(
+def test_module_level_server_drafts_true_send_false_omits_send_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """OUTLOOK_ALLOW_DRAFTS=true but OUTLOOK_ALLOW_SEND missing →
-    ol_email_send_draft is NOT registered. Default opt-in posture."""
-    monkeypatch.setenv("OUTLOOK_ALLOW_DRAFTS", "true")
-    monkeypatch.delenv("OUTLOOK_ALLOW_SEND", raising=False)
+    """DRAFTS=true + SEND=false: drafts registered but no send tool."""
+    _set_consent(monkeypatch, drafts="true", send="false")
     from outlook_mcp.server import _build_server
 
     server = _build_server()
     names = _list_tool_names(server)
+    assert "ol_email_create_draft" in names
     assert "ol_email_send_draft" not in names
-
-
-def test_module_level_server_omits_send_when_send_flag_without_drafts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """OUTLOOK_ALLOW_SEND=true but OUTLOOK_ALLOW_DRAFTS missing →
-    invalid configuration. The send tool is NOT registered (you
-    can't send what you can't draft). A warning is logged but the
-    server doesn't fail to start."""
-    monkeypatch.delenv("OUTLOOK_ALLOW_DRAFTS", raising=False)
-    monkeypatch.setenv("OUTLOOK_ALLOW_SEND", "true")
-    from outlook_mcp.server import _build_server
-
-    server = _build_server()
-    names = _list_tool_names(server)
-    assert "ol_email_send_draft" not in names
-    # Drafts also not registered (drafts flag missing)
-    assert "ol_email_create_draft" not in names

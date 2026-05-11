@@ -10,6 +10,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
 
+## [v0.4.0] — 2026-05-11
+
+**Breaking change** to the consent-env-var contract. Operators upgrading from v0.3.x must update their `.mcp.json` to set `OUTLOOK_ALLOW_DRAFTS` and `OUTLOOK_ALLOW_SEND` to exactly `"true"` or `"false"`; legacy truthy values (`1`, `yes`, `on`) and unset / empty are now rejected at startup. The motivation is the compliance-story upgrade described in [#37](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues/37) — the operator must consciously decide, not silently inherit a read-only default.
+
+### Changed (breaking)
+
+- **`OUTLOOK_ALLOW_DRAFTS` must be set to exactly `"true"` or `"false"`** (case-insensitive, trimmed). Any other value — including unset / empty / legacy `1`/`yes`/`on` — causes the server (and the CLI `login` subcommand) to refuse to start with a formatted onboarding-help message printed to stderr. Closes [#37](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues/37).
+- **`OUTLOOK_ALLOW_SEND` is required when `OUTLOOK_ALLOW_DRAFTS=true`** and must also be exactly `"true"` or `"false"`. When `OUTLOOK_ALLOW_DRAFTS=false`, `OUTLOOK_ALLOW_SEND` is not checked (it would be dead config).
+- **Server start is no longer silently read-only** when consent is unset. Previously the server fell through to read-only mode with an INFO log; operators commonly missed the log and assumed drafts were broken. The new error message is itself the documentation.
+
+### Added
+
+- **`outlook_mcp.auth.flow.OutlookConsentNotConfiguredError`** — new exception class raised by the strict consent parser. Re-exported from `auth.flow.__all__` so downstream tooling can catch it.
+- **`outlook_mcp.auth.flow.validate_consent_config()`** — returns `(drafts_enabled, send_enabled)` or raises. Single source of truth; called from `_build_server()` at module import and from `cli.main()` before the login flow.
+- **`outlook_mcp.auth.flow.ALLOW_DRAFTS_ENV`** — exported constant string `"OUTLOOK_ALLOW_DRAFTS"` (was hard-coded in `server.py` only).
+
+### Migration from v0.3.x
+
+Add the explicit decision to your `.mcp.json` env section:
+
+```jsonc
+{
+  "mcpServers": {
+    "outlook": {
+      "command": "uvx",
+      "args": ["mcp-server-outlook"],
+      "env": {
+        "OUTLOOK_ALLOW_DRAFTS": "false"   // or "true" + add OUTLOOK_ALLOW_SEND below
+        // "OUTLOOK_ALLOW_SEND": "true"   // only when DRAFTS=true
+      }
+    }
+  }
+}
+```
+
+If you were already setting `OUTLOOK_ALLOW_DRAFTS=true` and `OUTLOOK_ALLOW_SEND=true` in v0.3.x, no change is needed (those values were already among the accepted truthy set and remain the exact-strict form). If you relied on legacy `1`/`yes`/`on`, change to `true`.
+
 ## [v0.3.1] — 2026-05-08
 
 Patch fix for the v0.3.0 MCP-tool login flow.
