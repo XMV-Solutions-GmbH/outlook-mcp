@@ -32,6 +32,7 @@ import httpx
 from outlook_mcp.auth import get_token
 from outlook_mcp.draft_registry import DraftEntry, DraftRegistry, now
 from outlook_mcp.markdown import markdown_to_html
+from outlook_mcp.tools._attachments import attach_to_draft, validate_attachment
 from outlook_mcp.tools._common import GRAPH_BASE, auth_headers
 
 
@@ -43,6 +44,7 @@ def create_draft(
     body_html: str | None = None,
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
     profile: str = "default",
     http: httpx.Client | None = None,
 ) -> dict[str, Any]:
@@ -80,6 +82,13 @@ def create_draft(
     if not subject or not subject.strip():
         raise ValueError("ol_email_create_draft: `subject` must be non-empty")
 
+    # Validate every attachment's schema BEFORE any HTTP work — a
+    # malformed entry should fail fast, not after the draft has
+    # already been created on Graph.
+    if attachments:
+        for index, att in enumerate(attachments):
+            validate_attachment(att, index=index)
+
     if body_html is not None:
         content_type = "html"
         content = body_html
@@ -102,7 +111,8 @@ def create_draft(
 
     token = get_token(profile)
     headers = {**auth_headers(token), "Content-Type": "application/json"}
-    client = http if http is not None else httpx.Client(timeout=30.0)
+    client = http if http is not None else httpx.Client(timeout=60.0)
+    uploaded: list[dict[str, Any]] = []
     try:
         response = client.post(
             f"{GRAPH_BASE}/me/messages",
@@ -111,11 +121,18 @@ def create_draft(
         )
         response.raise_for_status()
         message = response.json()
+        draft_id = str(message["id"])
+        if attachments:
+            uploaded = attach_to_draft(
+                client=client,
+                token=token,
+                message_id=draft_id,
+                attachments=attachments,
+            )
     finally:
         if http is None:
             client.close()
 
-    draft_id = str(message["id"])
     web_url_raw = message.get("webLink")
     web_url = str(web_url_raw) if web_url_raw else None
 
@@ -129,7 +146,14 @@ def create_draft(
         )
     )
 
-    return {"draft_id": draft_id, "web_url": web_url}
+    result: dict[str, Any] = {"draft_id": draft_id, "web_url": web_url}
+    if attachments:
+        # Surface the Graph-assigned attachment ids so the caller can
+        # later remove specific ones via ol_email_update_draft.
+        result["attachments"] = [
+            {"id": a.get("id"), "name": a.get("name"), "size": a.get("size")} for a in uploaded
+        ]
+    return result
 
 
 def _to_recipient(addr: str) -> dict[str, Any]:

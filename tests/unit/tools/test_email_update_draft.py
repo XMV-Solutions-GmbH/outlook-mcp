@@ -270,3 +270,75 @@ def test_update_propagates_404(fresh_token: None, isolated_registry: Path) -> No
     respx.patch(GRAPH_URL).respond(404, json={"error": {"code": "ItemNotFound"}})
     with pytest.raises(httpx.HTTPStatusError):
         update_draft("draft-1", subject="x")
+
+
+# ---------------------------------------------------------------------
+# Attachments (v0.4) — add / remove
+# ---------------------------------------------------------------------
+
+
+@respx.mock
+def test_update_add_attachment_no_patch_when_only_attachment_op(
+    fresh_token: None, isolated_registry: Path
+) -> None:
+    """Only attachments to add → no PATCH on the message body, just
+    a GET for the return envelope plus the attachment POST."""
+    del fresh_token, isolated_registry
+    import base64
+
+    patch_route = respx.patch(GRAPH_URL)  # should NOT be called
+    respx.get(GRAPH_URL).respond(json={"id": "draft-1", "webLink": "https://outlook.example/x"})
+    att_route = respx.post(f"{GRAPH_URL}/attachments").respond(
+        201, json={"id": "att-new", "name": "addendum.txt", "size": 4}
+    )
+    result = update_draft(
+        "draft-1",
+        add_attachments=[
+            {"name": "addendum.txt", "content_bytes_b64": base64.b64encode(b"new!").decode()}
+        ],
+    )
+    assert patch_route.call_count == 0
+    assert att_route.call_count == 1
+    assert result["added_attachments"] == [{"id": "att-new", "name": "addendum.txt", "size": 4}]
+
+
+@respx.mock
+def test_update_remove_attachment_idempotent(fresh_token: None, isolated_registry: Path) -> None:
+    """remove_attachment_ids with a stale id → 404 swallowed; result still returned."""
+    del fresh_token, isolated_registry
+
+    respx.get(GRAPH_URL).respond(json={"id": "draft-1", "webLink": "x"})
+    respx.delete(f"{GRAPH_URL}/attachments/already-gone").respond(404)
+    result = update_draft("draft-1", remove_attachment_ids=["already-gone"])
+    assert result["removed_attachment_ids"] == ["already-gone"]
+
+
+@respx.mock
+def test_update_combines_subject_and_attachments(
+    fresh_token: None, isolated_registry: Path
+) -> None:
+    """PATCH subject AND add attachment in one call: both ops fire."""
+    del fresh_token, isolated_registry
+    import base64
+
+    patch_route = respx.patch(GRAPH_URL).respond(
+        json={"id": "draft-1", "subject": "New", "webLink": "x"}
+    )
+    att_route = respx.post(f"{GRAPH_URL}/attachments").respond(
+        201, json={"id": "att-c", "name": "f.bin", "size": 3}
+    )
+    result = update_draft(
+        "draft-1",
+        subject="New",
+        add_attachments=[{"name": "f.bin", "content_bytes_b64": base64.b64encode(b"abc").decode()}],
+    )
+    assert patch_route.call_count == 1
+    assert att_route.call_count == 1
+    assert "added_attachments" in result
+
+
+def test_update_rejects_no_op_call(fresh_token: None, isolated_registry: Path) -> None:
+    """No core field, no attachments → ValueError."""
+    del fresh_token, isolated_registry
+    with pytest.raises(ValueError, match="nothing to update"):
+        update_draft("draft-1")

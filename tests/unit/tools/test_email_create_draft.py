@@ -253,3 +253,50 @@ def test_create_draft_propagates_403(fresh_token: None, isolated_registry: Path)
     respx.post(GRAPH_URL).respond(403, json={"error": {"code": "Forbidden"}})
     with pytest.raises(httpx.HTTPStatusError):
         create_draft(to=["a@x.de"], subject="S", body="b")
+
+
+# ---------------------------------------------------------------------
+# Attachments (v0.4)
+# ---------------------------------------------------------------------
+
+
+@respx.mock
+def test_create_draft_with_small_attachment(fresh_token: None, isolated_registry: Path) -> None:
+    """Happy path: small attachment uploaded via single-shot POST."""
+    del fresh_token, isolated_registry
+    import base64
+
+    respx.post(GRAPH_URL).respond(json={"id": "draft-1", "webLink": "https://outlook.example/x"})
+    att_route = respx.post(
+        "https://graph.microsoft.com/v1.0/me/messages/draft-1/attachments"
+    ).respond(201, json={"id": "att-1", "name": "spec.pdf", "size": 128})
+    result = create_draft(
+        to=["a@x.de"],
+        subject="S",
+        body="b",
+        attachments=[
+            {"name": "spec.pdf", "content_bytes_b64": base64.b64encode(b"x" * 128).decode()},
+        ],
+    )
+    assert result["draft_id"] == "draft-1"
+    assert result["attachments"] == [{"id": "att-1", "name": "spec.pdf", "size": 128}]
+    assert att_route.call_count == 1
+
+
+def test_create_draft_validates_attachments_before_post(
+    fresh_token: None, isolated_registry: Path
+) -> None:
+    """Malformed attachment → no Graph POST is made (validation is pre-HTTP)."""
+    del fresh_token, isolated_registry
+    with respx.mock:
+        msg_route = respx.post(GRAPH_URL)
+        from outlook_mcp.tools._attachments import AttachmentSchemaError
+
+        with pytest.raises(AttachmentSchemaError):
+            create_draft(
+                to=["a@x.de"],
+                subject="S",
+                body="b",
+                attachments=[{"name": "ok.txt", "content_bytes_b64": "AAAA"}, {"name": "bad"}],
+            )
+        assert msg_route.call_count == 0
