@@ -31,6 +31,11 @@ import httpx
 from outlook_mcp.auth import get_token
 from outlook_mcp.draft_registry import DraftEntry, DraftRegistry
 from outlook_mcp.markdown import markdown_to_html
+from outlook_mcp.tools._attachments import (
+    attach_to_draft,
+    remove_attachments,
+    validate_attachment,
+)
 from outlook_mcp.tools._common import GRAPH_BASE, auth_headers
 
 
@@ -63,6 +68,8 @@ def update_draft(
     to: list[str] | None = None,
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
+    add_attachments: list[dict[str, Any]] | None = None,
+    remove_attachment_ids: list[str] | None = None,
     profile: str = "default",
     http: httpx.Client | None = None,
 ) -> dict[str, Any]:
@@ -94,6 +101,12 @@ def update_draft(
             "ol_email_update_draft: pass `body` (Markdown) OR `body_html` (raw HTML), not both",
         )
 
+    # Validate attachments BEFORE any HTTP work — a malformed entry
+    # should fail fast, not after the PATCH already landed.
+    if add_attachments:
+        for index, att in enumerate(add_attachments):
+            validate_attachment(att, index=index)
+
     payload: dict[str, Any] = {}
     if subject is not None:
         payload["subject"] = subject
@@ -108,10 +121,10 @@ def update_draft(
     if bcc is not None:
         payload["bccRecipients"] = _to_recipients(bcc)
 
-    if not payload:
+    if not payload and not add_attachments and not remove_attachment_ids:
         raise ValueError(
             "ol_email_update_draft: nothing to update — pass at least one of "
-            "subject / body / body_html / to / cc / bcc",
+            "subject / body / body_html / to / cc / bcc / add_attachments / remove_attachment_ids",
         )
 
     registry = DraftRegistry(profile=profile)
@@ -121,15 +134,40 @@ def update_draft(
 
     token = get_token(profile)
     headers = {**auth_headers(token), "Content-Type": "application/json"}
-    client = http if http is not None else httpx.Client(timeout=30.0)
+    client = http if http is not None else httpx.Client(timeout=60.0)
+    uploaded: list[dict[str, Any]] = []
     try:
-        response = client.patch(
-            f"{GRAPH_BASE}/me/messages/{draft_id}",
-            headers=headers,
-            json=payload,
-        )
-        response.raise_for_status()
-        message = response.json()
+        if payload:
+            response = client.patch(
+                f"{GRAPH_BASE}/me/messages/{draft_id}",
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            message = response.json()
+        else:
+            # No core fields to PATCH — only attachment ops requested.
+            # Skip the PATCH; fetch the message body for the return value.
+            response = client.get(
+                f"{GRAPH_BASE}/me/messages/{draft_id}",
+                headers=auth_headers(token),
+            )
+            response.raise_for_status()
+            message = response.json()
+        if remove_attachment_ids:
+            remove_attachments(
+                client=client,
+                token=token,
+                message_id=draft_id,
+                attachment_ids=remove_attachment_ids,
+            )
+        if add_attachments:
+            uploaded = attach_to_draft(
+                client=client,
+                token=token,
+                message_id=draft_id,
+                attachments=add_attachments,
+            )
     finally:
         if http is None:
             client.close()
@@ -151,7 +189,14 @@ def update_draft(
             )
         )
 
-    return {"draft_id": draft_id, "web_url": web_url}
+    result: dict[str, Any] = {"draft_id": draft_id, "web_url": web_url}
+    if add_attachments:
+        result["added_attachments"] = [
+            {"id": a.get("id"), "name": a.get("name"), "size": a.get("size")} for a in uploaded
+        ]
+    if remove_attachment_ids:
+        result["removed_attachment_ids"] = list(remove_attachment_ids)
+    return result
 
 
 def _to_recipients(addrs: list[str]) -> list[dict[str, Any]]:

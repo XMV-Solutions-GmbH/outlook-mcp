@@ -374,13 +374,21 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
         description=(
             "Create a new mail draft in the user's Drafts folder. The "
             "draft is NOT sent — the human reviews it in Outlook and "
-            "clicks Send manually. Returns {draft_id, web_url}. "
+            "clicks Send manually. Returns {draft_id, web_url, "
+            "attachments?}. "
             "Body input: pass `body` (Markdown, rendered to HTML "
             "server-side via a safe-mode renderer that strips "
             "javascript: links and inline HTML) OR `body_html` (raw "
             "HTML used as-is). The two are mutually exclusive. "
             "Recipients: `to` is required (non-empty list of email "
-            "addresses); `cc` and `bcc` are optional. The draft is "
+            "addresses); `cc` and `bcc` are optional. Attachments "
+            "(optional): list of dicts, each with `name` (filename in "
+            "mail) and exactly one of `content_path` (local file path), "
+            "`content_bytes_b64` (already-base64-encoded raw bytes), "
+            "or `content_url` (http/https URL — server downloads). "
+            "Optional `content_type` (MIME) on each; inferred from "
+            "filename extension if absent. Files >3 MiB use Graph's "
+            "resumable upload session automatically. The draft is "
             "tracked in this profile's draft registry — visible via "
             "ol_status."
         ),
@@ -392,6 +400,7 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
         body_html: str | None = None,
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         return _do_email_create_draft(
             to=to,
@@ -400,6 +409,7 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
             body_html=body_html,
             cc=cc,
             bcc=bcc,
+            attachments=attachments,
             profile=_get_profile(),
         )
 
@@ -419,8 +429,15 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
             "set; pass None or omit to leave unchanged. `to` / `cc` / "
             "`bcc`: None = unchanged, [] = clear, non-empty list = set. "
             "`body` and `body_html` are mutually exclusive per call. "
-            "Returns {draft_id, web_url}. Marked destructive because the "
-            "PATCH overwrites the previous draft state on Graph."
+            "`add_attachments` (optional): same shape as the "
+            "ol_email_create_draft `attachments` parameter — additive, "
+            "doesn't replace existing attachments. `remove_attachment_ids` "
+            "(optional): list of attachment ids to delete (ids come back "
+            "from create / from the result of an earlier "
+            "ol_email_update_draft). Returns {draft_id, web_url, "
+            "added_attachments?, removed_attachment_ids?}. Marked "
+            "destructive because the PATCH overwrites the previous "
+            "draft state on Graph."
         ),
     )
     def ol_email_update_draft(
@@ -431,6 +448,8 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
         to: list[str] | None = None,
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
+        add_attachments: list[dict[str, Any]] | None = None,
+        remove_attachment_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         return _do_email_update_draft(
             draft_id,
@@ -440,6 +459,8 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
             to=to,
             cc=cc,
             bcc=bcc,
+            add_attachments=add_attachments,
+            remove_attachment_ids=remove_attachment_ids,
             profile=_get_profile(),
         )
 

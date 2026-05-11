@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
 
+## [v0.5.0] — 2026-05-11
+
+Attachments arrive — drafts can now carry files, no more "use a separate Graph client" workaround. Two new MCP-tool parameters; one new internal helper module.
+
+### Added
+
+- **`ol_email_create_draft` accepts `attachments: list[Attachment]`** and uploads each file to the freshly-created draft before returning. Returns `{draft_id, web_url, attachments: [{id, name, size}]}` so the caller can later remove specific items by id.
+- **`ol_email_update_draft` accepts `add_attachments: list[Attachment]` + `remove_attachment_ids: list[str]`** with additive semantics — does NOT replace existing attachments. Returns `added_attachments` / `removed_attachment_ids` in the result. When ONLY attachment operations are requested (no `subject` / `body` / recipients), the tool skips the `PATCH /me/messages/{id}` step and just hits the `/attachments` endpoints, fetching the draft via GET for the return envelope.
+- **`Attachment` schema** — dict with `name: str` plus exactly one of `content_path` (local file), `content_bytes_b64` (already-base64-encoded raw bytes), `content_url` (http/https URL — server downloads). Optional `content_type` (MIME); inferred from filename extension if absent. Schema is validated locally for every attachment in the list **before any HTTP call**, so a malformed third entry doesn't leave the first two half-uploaded.
+- **Resumable uploads for files >3 MiB.** The helper picks single-shot POST vs `createUploadSession` automatically based on content size. Resumable path uses 8 MiB chunks (Graph's recommended boundary alignment), strips the Authorization header on the chunked PUTs (the uploadUrl is pre-authenticated by Graph), and falls back to a GET on the attachment list if the final chunk returns 2xx without a body.
+- **New helper `outlook_mcp.tools._attachments`** with public-ish API: `validate_attachment`, `load_attachment_bytes`, `upload_attachment`, `attach_to_draft`, `remove_attachments`, plus `AttachmentSchemaError` exception (subclass of `ValueError` so existing handlers catch it without changes). Closes [#36](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues/36).
+
+### Engineering
+
+- 347 unit tests (was 318 — 23 new in `test_attachments.py` covering schema rules, all three content sources, single-shot vs resumable path selection, the 2xx-without-body fallback; 3 new in `test_email_create_draft.py`; 4 new in `test_email_update_draft.py`).
+
+### Out of scope
+
+- **Inline attachments** (`cid:` references in HTML body) — Phase 2; tracked as a follow-up because the round-trip differs (the attachment's `contentId` field needs to match the `<img src="cid:...">` reference in the body, and Graph treats inline attachments as a different attachment-type subtype). Plain attachments cover the dominant use case for v0.5.
+
 ## [v0.4.0] — 2026-05-11
 
 **Breaking change** to the consent-env-var contract. Operators upgrading from v0.3.x must update their `.mcp.json` to set `OUTLOOK_ALLOW_DRAFTS` and `OUTLOOK_ALLOW_SEND` to exactly `"true"` or `"false"`; legacy truthy values (`1`, `yes`, `on`) and unset / empty are now rejected at startup. The motivation is the compliance-story upgrade described in [#37](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues/37) — the operator must consciously decide, not silently inherit a read-only default.
