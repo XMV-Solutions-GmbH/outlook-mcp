@@ -70,9 +70,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Parse CLI arguments and dispatch to the right subcommand.
 
     Returns the process exit code.
+
+    For both `login` and the default server-start path, validates the
+    consent env vars (`OUTLOOK_ALLOW_DRAFTS` / `OUTLOOK_ALLOW_SEND`)
+    up-front — if either is unset or has a non-`true`/`false` value,
+    prints the help text and exits 2. The CLI `logout` subcommand
+    skips this check because clearing a cached token doesn't depend
+    on the operator's draft/send decision.
     """
+    import sys
+
+    from outlook_mcp.auth.flow import (
+        OutlookConsentNotConfiguredError,
+        validate_consent_config,
+    )
+
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    if args.command != "logout":
+        try:
+            validate_consent_config()
+        except OutlookConsentNotConfiguredError as err:
+            sys.stderr.write(str(err) + "\n")
+            return 2
 
     if args.command == "login":
         from outlook_mcp.auth import interactive_login

@@ -22,7 +22,6 @@ draft tools enabled in v0.2, no `send_*` tool will be added.
 
 from __future__ import annotations
 
-import logging
 import os
 import sys
 from typing import Any
@@ -30,7 +29,13 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
-from outlook_mcp.auth.flow import send_enabled
+from outlook_mcp.auth.flow import (
+    ALLOW_DRAFTS_ENV as _AUTH_FLOW_ALLOW_DRAFTS_ENV,
+)
+from outlook_mcp.auth.flow import (
+    OutlookConsentNotConfiguredError,
+    validate_consent_config,
+)
 from outlook_mcp.tools.calendar_create_event_draft import (
     create_event_draft as _do_calendar_create_event_draft,
 )
@@ -53,8 +58,8 @@ from outlook_mcp.tools.status import status as _do_status
 
 PROFILE_ENV = "OUTLOOK_PROFILE"
 DEFAULT_PROFILE = "default"
-ALLOW_DRAFTS_ENV = "OUTLOOK_ALLOW_DRAFTS"
-_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+# Re-exported here for backwards-compat with v0.3.x importers.
+ALLOW_DRAFTS_ENV = _AUTH_FLOW_ALLOW_DRAFTS_ENV
 
 
 def _get_profile() -> str:
@@ -62,13 +67,15 @@ def _get_profile() -> str:
 
 
 def drafts_enabled() -> bool:
-    """True iff `OUTLOOK_ALLOW_DRAFTS` is set to a recognised truthy value.
+    """True iff `OUTLOOK_ALLOW_DRAFTS` is set to exactly `"true"`.
 
-    Default (unset / empty / anything else): drafts are NOT enabled,
-    matching the read-only-default policy. In v0.1 there are no draft
-    tools regardless; this hook exists for v0.2.
+    Strict parser since v0.4 — raises `OutlookConsentNotConfiguredError`
+    if the env var is unset, empty, or has a value other than `true`
+    or `false`. There is no implicit default; the operator must
+    consciously decide. See issue #37 for the user-side rationale.
     """
-    return os.environ.get(ALLOW_DRAFTS_ENV, "").strip().lower() in _TRUE_VALUES
+    drafts, _ = validate_consent_config()
+    return drafts
 
 
 def register_read_tools(mcp_instance: FastMCP) -> None:
@@ -566,36 +573,37 @@ def register_send_tools(mcp_instance: FastMCP) -> None:
 
 
 def _build_server() -> FastMCP:
-    """Build and return a FastMCP server with the right tools registered."""
+    """Build and return a FastMCP server with the right tools registered.
+
+    Validates the consent env vars (`OUTLOOK_ALLOW_DRAFTS` /
+    `OUTLOOK_ALLOW_SEND`) up-front via `validate_consent_config()` —
+    if either is unset or has a non-`true`/`false` value, the function
+    raises `OutlookConsentNotConfiguredError` with a clear onboarding-help
+    message. The exception is allowed to propagate so the operator
+    sees it on stderr; no silent read-only fallback.
+    """
+    drafts, send = validate_consent_config()
     server = FastMCP("mcp-server-outlook")
     register_read_tools(server)
-    if drafts_enabled():
+    if drafts:
         register_write_tools(server)
-        if send_enabled():
+        if send:
             register_send_tools(server)
-    else:
-        # One-line note on stderr so users running uvx interactively
-        # see why drafts are absent. Quiet by default to avoid noise
-        # in MCP-client-launched contexts (Claude Code captures
-        # stderr but doesn't surface it loudly).
-        logging.getLogger("outlook-mcp").info(
-            "OUTLOOK_ALLOW_DRAFTS not set — read-only mode "
-            "(ol_email_create_draft etc. not registered). "
-            "Set OUTLOOK_ALLOW_DRAFTS=true to enable drafts.",
-        )
-        if send_enabled():
-            # Send-without-drafts is invalid configuration; warn so the
-            # user knows their flag is doing nothing.
-            logging.getLogger("outlook-mcp").warning(
-                "OUTLOOK_ALLOW_SEND is set but OUTLOOK_ALLOW_DRAFTS is "
-                "not — ol_email_send_draft requires drafts to be "
-                "enabled (you can't send what you can't draft). The "
-                "send tool will NOT be registered.",
-            )
     return server
 
 
-mcp: FastMCP = _build_server()
+# Build at module-import time so MCP-client launchers (uvx, etc.)
+# get the consent-validation error immediately on startup rather
+# than mid-protocol-handshake.
+try:
+    mcp: FastMCP = _build_server()
+except OutlookConsentNotConfiguredError as err:
+    # Print the help text to stderr so MCP-client log windows show
+    # it verbatim — the message IS the onboarding doc. Then re-raise
+    # so the process exits non-zero.
+    sys.stderr.write(str(err) + "\n")
+    sys.stderr.flush()
+    raise
 
 
 def run() -> None:
