@@ -151,8 +151,7 @@ A harness sandbox is **a real, dedicated test environment that mirrors productio
 
 The agent's working machine has all credentials and tools it needs to test against the harness sandbox:
 
-- Credentials for the harness account (refresh token, OAuth-cached token, service-account key, kubeconfig). Cached locally on the agent's machine — **not only in CI**.
-- The same credentials available to CI as a secret, so harness tests can run on PRs after they pass locally.
+- Credentials for the harness account (refresh token, OAuth-cached token, service-account key, kubeconfig). Cached locally on the agent's machine — **always, without exception**. Local harness access is the primary development feedback loop; no feature ticket enters "Doing" without it.
 - Repo write access so the agent can commit.
 - Tooling installed (via a project setup script — see § 8).
 
@@ -169,7 +168,7 @@ Every project's App Concept (or equivalent product/architecture document) must i
 Plus the operational answers per § 5:
 
 - What environments exist (local, sandbox-harness, staging, production) and what each is for.
-- Where the AI runs each layer of tests (typically: unit + integration locally and in CI, harness from the agent's machine + CI on PRs).
+- Where the AI runs each layer of tests (unit + integration: locally and in CI; harness: always locally on the agent's machine; in CI: project-specific decision — see § 5 "Harness tests in CI").
 - What's tested automatically vs. what requires human eyes.
 
 Without all of this, vibe coding degrades to "the AI writes plausible-looking code that nobody actually verifies against reality."
@@ -181,7 +180,7 @@ For projects where AI is the primary developer, the ticket sequence is:
 1. **Package / repo skeleton.**
 2. **Harness sandbox setup** — provision the sandbox, create the least-privilege test account, install credentials on the agent's machine, write **one** harness test that proves end-to-end auth works against the real system. **No feature tickets enter "Doing" before this is green.**
 3. **Unit + integration test scaffolding** — pytest/vitest/etc. structure, the first failing test of each kind.
-4. **Feature tickets** — each ships a harness test, or explicitly justifies why unit/integration suffices for that piece.
+4. **Feature tickets** — each ships a harness test, or explicitly justifies why unit/integration suffices for that piece. The harness test covers **both the sunny path and the key error paths** — at minimum: resource not found, access denied, conflicting state. Error paths are where real API behaviour most often diverges from documentation and mock assumptions.
 
 The harness-setup ticket is the gate. If the gate isn't green, feature work cannot start — because feature work without harness is feature work without verification, and we end up shipping code that compiles and passes mocks but breaks against the real API on first contact.
 
@@ -200,6 +199,20 @@ When deriving an issue backlog from a concept document for an AI-driven project:
 - Letting feature tickets land before the harness layer works. The first time the code talks to the real system is the worst time to discover the auth flow is broken or the scope is wrong.
 - Using a powerful test account "because it's faster to set up." The harness account is least-privilege scoped to the sandbox, full stop. A leaked admin token from the agent's machine is not an acceptable failure mode.
 - Generating an issue backlog from a concept that has no Testability section. The missing section is the defect; spawning issues first only buries it.
+- Harness tests that cover only the sunny path. The most valuable thing a harness test can verify is the error shape: does a missing resource really return 404? Does a locked item really block writes? Is the error body structured the way our code expects? A harness suite without error-path tests fails to catch the class of divergence it was built to catch.
+
+### Harness tests in CI: a project-specific trade-off
+
+Running harness tests as a gate in the CI pipeline is **not universally required**. It carries ongoing costs that vary by project:
+
+- **Credentials in CI** — harness credentials must be stored as repository secrets. Every CI runner executing the harness job has access to tokens for the real external system. A compromised secret means compromised external access.
+- **External availability** — CI becomes dependent on the external system. An unrelated API blip can fail a PR that touches nothing API-related.
+- **Maintenance burden** — credentials expire, test accounts need reprovisioning, sandbox environments drift. That maintenance falls on the project's maintainer at the worst possible moment.
+- **CI speed** — harness tests are seconds to minutes. They extend PR cycle time for every contributor.
+
+The **benefits** are also real: regressions in external API behaviour are caught before merge; contributors without local harness access have their PRs verified end-to-end.
+
+**The decision is project-specific and must be recorded.** If harness tests run in CI, the decision — and the reasoning — must be captured in a Decision Record in `docs/proposals/` (see § 16). A future agent or maintainer needs to understand why, without access to the founding conversation.
 
 ---
 
@@ -431,3 +444,35 @@ Operationally:
 
 - A doc-pass at the end of every meaningful piece of work. The relevant doc gets read end-to-end and corrected.
 - The PR description (or commit message in the trunk-only era) lists the docs that were touched alongside the code change.
+
+---
+
+## 16. Project-specific decisions as permanent records
+
+Engineering Principles are project-agnostic by design. Some principles explicitly name a trade-off that each project must decide individually — "whether to run harness tests in CI" (§ 5) is one example; "which third-party auth library to use" is another. When a project exercises one of those choices, **the chosen path and the reasoning must survive in a permanent, findable record**.
+
+The record lives in `docs/proposals/`, using the format described in `docs/proposals/README.md`. Each Decision Record captures:
+
+- **What was decided** — the chosen option, stated plainly.
+- **Why** — the constraints and trade-offs that drove the choice: costs accepted, benefits sought, alternatives discarded.
+- **Consequences for future maintainers** — what assumptions are now baked in; what to revisit if the context changes.
+
+### Why this matters
+
+A new agent (or human maintainer) who inherits the project has no memory of founding conversations. It can read the code. It can read the issue tracker. But it cannot recover the reasoning behind choices that are invisible in the code — *"why is harness wired into CI?" "why this library and not that one?"* — unless someone wrote it down.
+
+Decision Records are that writing-down. They are append-only history: a record is never deleted, only superseded. If a later decision reverses or refines an earlier one, the new record references the old one and explains the change.
+
+### When to write a Decision Record
+
+- Whenever Engineering Principles say "this is a project-specific trade-off." The Decision Record is the documented answer.
+- Whenever a choice is **costly to reverse** and the reasoning will not be obvious from the code six months later.
+- Whenever a choice was **made in conversation** (chat, verbal, comment thread) and carries lasting weight for the project. Conversations evaporate; records do not.
+
+### What not to put here
+
+Routine implementation choices (variable names, small refactors, which test file to add a test to) do not need Decision Records. The test: *"would a future maintainer, reading only the repo, think this was a mistake and undo it?"* If yes, write the record.
+
+### Finding decisions in an unfamiliar project
+
+The first place to look is `docs/proposals/`. The README there lists all proposals with status. Decision Records are accepted proposals with `Status: Implemented` or `Status: Accepted`. Reading that directory is part of any new agent's bootstrap for the project.
