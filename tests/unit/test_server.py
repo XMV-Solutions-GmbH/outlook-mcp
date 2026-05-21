@@ -121,6 +121,25 @@ def test_register_read_tools_adds_all_read_tools() -> None:
     }
 
 
+def test_login_tool_descriptions_carry_agent_instructions_marker() -> None:
+    """Both ol_login_begin and ol_login_status MUST embed the literal
+    `AGENT_INSTRUCTIONS:` marker — closes #42. The marker is the contract
+    with pattern-matching MCP clients; rephrasing it breaks them."""
+    server = FastMCP("test-read-only")
+    register_read_tools(server)
+    tools = asyncio.run(server.list_tools())
+    login_tools = {t.name: t for t in tools if t.name in ("ol_login_begin", "ol_login_status")}
+    assert set(login_tools.keys()) == {"ol_login_begin", "ol_login_status"}
+    for name, tool in login_tools.items():
+        assert tool.description is not None, f"{name} missing description"
+        assert "AGENT_INSTRUCTIONS:" in tool.description, (
+            f"{name} description must include the literal "
+            f"'AGENT_INSTRUCTIONS:' marker; got: {tool.description!r}"
+        )
+        assert "fenced code block" in tool.description
+        assert "markdown link" in tool.description
+
+
 def test_login_begin_tool_annotations() -> None:
     """ol_login_begin mutates local state (writes a token to disk on
     success) but does NOT mutate any mailbox state — readOnlyHint=False,

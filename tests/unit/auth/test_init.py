@@ -16,8 +16,10 @@ import pytest
 import respx
 
 from outlook_mcp.auth import (
+    AGENT_INSTRUCTIONS,
     AuthRequiredError,
     DeviceCodeChallenge,
+    _default_prompt,
     get_token,
     interactive_login,
 )
@@ -349,3 +351,82 @@ def test_get_token_explicit_delegated_overrides_secret_presence(
     # former.
     with pytest.raises(AuthRequiredError, match="no cached credentials"):
         get_token(store=store)
+
+
+# ---------------------------------------------------------------------
+# AGENT_INSTRUCTIONS rendering — closes #42
+# ---------------------------------------------------------------------
+
+
+def _challenge(
+    code: str = "ABCD-1234",
+    uri: str = "https://aka.ms/devicelogin",
+) -> DeviceCodeChallenge:
+    return DeviceCodeChallenge(
+        user_code=code,
+        verification_uri=uri,
+        verification_uri_complete=None,
+        expires_at=time.time() + 900,
+        interval=5,
+        message="msg",
+    )
+
+
+def test_default_prompt_emits_agent_instructions_marker(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The literal `AGENT_INSTRUCTIONS:` marker is in the stderr output so
+    a pattern-matching MCP-client can detect it."""
+    _default_prompt(_challenge())
+    err = capsys.readouterr().err
+    assert "AGENT_INSTRUCTIONS:" in err
+
+
+def test_default_prompt_wraps_code_in_fenced_block(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An agent that copies the stderr verbatim still gets the right visual
+    output: the code is already inside ```...```."""
+    _default_prompt(_challenge(code="XYZ-9999"))
+    err = capsys.readouterr().err
+    assert "```\nXYZ-9999\n```" in err
+
+
+def test_default_prompt_emits_url_as_bare_link(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The verification URL appears as a bare URL on its own line — no `URL:`
+    prefix, no quoting — so chat UIs that auto-link bare URLs render it as
+    clickable."""
+    _default_prompt(_challenge(uri="https://login.microsoftonline.com/common/oauth2/deviceauth"))
+    err = capsys.readouterr().err
+    assert "Sign-in URL: https://login.microsoftonline.com/common/oauth2/deviceauth" in err
+
+
+def test_default_prompt_does_not_wrap_url_in_quotes_or_backticks(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Regression guard: previously the URL was prefixed with `URL:` and indented,
+    which prevented chat UIs from auto-linking it."""
+    _default_prompt(_challenge(uri="https://example.com/auth"))
+    err = capsys.readouterr().err
+    assert "`https://example.com/auth`" not in err
+    assert "     URL:" not in err
+
+
+def test_default_prompt_includes_no_paraphrase_clause(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The 'Do not paraphrase' rule is what stops well-meaning models from
+    formatting it 'helpfully'."""
+    _default_prompt(_challenge())
+    err = capsys.readouterr().err
+    assert "Do not paraphrase" in err
+
+
+def test_agent_instructions_constant_is_stable_string() -> None:
+    """The constant is a single string — agents pattern-match on the literal
+    `AGENT_INSTRUCTIONS:` prefix, so don't make it a template with placeholders."""
+    assert AGENT_INSTRUCTIONS.startswith("AGENT_INSTRUCTIONS:")
+    assert "fenced code block" in AGENT_INSTRUCTIONS
+    assert "markdown link" in AGENT_INSTRUCTIONS
