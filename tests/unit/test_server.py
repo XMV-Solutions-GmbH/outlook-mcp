@@ -128,9 +128,7 @@ def test_login_tool_descriptions_carry_agent_instructions_marker() -> None:
     server = FastMCP("test-read-only")
     register_read_tools(server)
     tools = asyncio.run(server.list_tools())
-    login_tools = {
-        t.name: t for t in tools if t.name in ("ol_login_begin", "ol_login_status")
-    }
+    login_tools = {t.name: t for t in tools if t.name in ("ol_login_begin", "ol_login_status")}
     assert set(login_tools.keys()) == {"ol_login_begin", "ol_login_status"}
     for name, tool in login_tools.items():
         assert tool.description is not None, f"{name} missing description"
