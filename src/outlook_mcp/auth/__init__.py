@@ -117,19 +117,37 @@ def _has_desktop_session() -> bool:
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
+# Stable, agent-readable instruction block. Both the CLI `_default_prompt`
+# and the MCP tool description for ol_login_begin / ol_login_status emit
+# this verbatim so an MCP-client agent can pattern-match the literal
+# `AGENT_INSTRUCTIONS:` marker and render the credentials correctly in
+# the chat UI.
+#
+# The wording optimises for "mobile copy → tap URL → paste code" — the
+# happy path of OAuth Device Code on a phone. A fenced code block gets a
+# one-click copy button; a bare URL becomes auto-linked. Anything else
+# (bold links, inline code, prose-embedded codes) breaks that flow.
+AGENT_INSTRUCTIONS = (
+    "AGENT_INSTRUCTIONS: Present the verification code to the user inside a "
+    "fenced code block (so it can be copied with one click) and present the "
+    "verification URL as a plain markdown link on its own line. Do not "
+    "paraphrase, do not embed the code inside prose, do not wrap the URL "
+    "in bold."
+)
+
+
 def _default_prompt(challenge: DeviceCodeChallenge) -> None:
     """Show the Device Code challenge to the human running login.
 
-    Microsoft Identity v2.0's /devicecode does not populate
-    `verification_uri_complete` (RFC 8628 §3.3.1's optional pre-filled
-    URL), so the user has to type the user_code into the page
-    themselves. This matches `az login --use-device-code` and every
-    other OAuth-Device-Code-against-Microsoft tool's UX.
+    Output shape is locked down by the `AGENT_INSTRUCTIONS` marker
+    above: an MCP-client agent that pipes this stderr to the chat UI
+    will see the explicit "render code in fenced block, URL as link"
+    instruction first, then the actual code already pre-formatted that
+    way. Agents that ignore the marker still get the right visual
+    output because the raw stderr is already in the target format.
 
     On a desktop session, tries to open the verification URL
-    automatically so at least the page is one click away. In every
-    case, prints the URL + code to stderr in a copy/paste-friendly
-    format.
+    automatically so the page is one click away.
     """
     target_uri = challenge.verification_uri_complete or challenge.verification_uri
 
@@ -140,23 +158,23 @@ def _default_prompt(challenge: DeviceCodeChallenge) -> None:
         except webbrowser.Error:
             opened = False
 
-    code_line = f"     Code:  {challenge.user_code}"
-    url_line = f"     URL:   {challenge.verification_uri}"
-
-    if challenge.verification_uri_complete:
-        # Provider gave us a pre-filled URL; the code line is redundant
-        # but still useful for transcribing across devices.
-        url_line = f"     URL:   {challenge.verification_uri_complete}"
-
     if opened:
-        header = "Opening your browser to complete sign-in."
-        instructions = "If it didn't open, paste the URL below into a browser."
+        header = "Sign-in via Device Code flow. Browser opened automatically."
     else:
-        header = "Sign in to mcp-server-outlook via the Device Code flow:"
-        instructions = "Open the URL in a browser and type the code."
+        header = "Sign in to mcp-server-outlook via the Device Code flow."
 
+    url_to_show = challenge.verification_uri_complete or challenge.verification_uri
+
+    # Code FIRST in a bare fenced block (no language tag, no labels);
+    # URL SECOND on its own line as a plain auto-link. See AGENT_INSTRUCTIONS.
     print(
-        f"\n{header}\n{instructions}\n\n{url_line}\n{code_line}\n\nWaiting for sign-in...",
+        (
+            f"\n{header}\n\n"
+            f"{AGENT_INSTRUCTIONS}\n\n"
+            f"Code:\n```\n{challenge.user_code}\n```\n\n"
+            f"Sign-in URL: {url_to_show}\n\n"
+            "Waiting for sign-in..."
+        ),
         file=sys.stderr,
         flush=True,
     )
