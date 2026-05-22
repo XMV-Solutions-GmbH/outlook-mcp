@@ -233,12 +233,14 @@ Agent:  [ol_login_begin() returns success]
 
 ### Safety model
 
-Four layers of "don't accidentally do something irreversible":
+Six layers of "don't accidentally do something irreversible":
 
-1. **Your MCP client (Claude Code) prompts before each tool call by default.** Read tools are flagged read-only; draft tools are flagged "creates draft (no send)"; the v0.3+ send tool is flagged destructive — you see the difference at the prompt.
+1. **Your MCP client (Claude Code) prompts before each tool call by default.** Read tools are flagged read-only; draft tools are flagged "creates draft (no send)"; send + delete tools are flagged destructive — you see the difference at the prompt.
 2. **Drafts opt-in via env (v0.2).** Without `OUTLOOK_ALLOW_DRAFTS=true`, the draft-creation tools aren't even registered. The agent literally can't draft.
 3. **Send opt-in via a separate env (v0.3).** Without `OUTLOOK_ALLOW_SEND=true`, the send tool is not registered AND `Mail.Send` is not in the OAuth scope request. The default consent screen stays drafts-only.
-4. **Never autonomous send.** Even with both opt-ins active, the agent must explicitly call `ol_email_send_draft(draft_id)` with a specific draft id. There is no path where an agent's tool call results in a sent email without the human first being able to read the draft body and recipients in Outlook.
+4. **Shared-mailbox opt-in via a separate env (v0.5).** Without `OUTLOOK_ALLOW_SHARED_MAILBOXES=true`, the email tools' `mailbox` parameter is refused with a clear error AND `Mail.ReadWrite.Shared` is not in the OAuth scope request. Default-install agents can only see / modify the signed-in user's mailbox.
+5. **Delete opt-in via a separate env (v0.5).** Without `OUTLOOK_ALLOW_DELETE=true`, `ol_email_delete` is not registered. Independent of the drafts/send chain — enabling drafts doesn't enable delete and vice versa.
+6. **Never autonomous send.** Even with both send + delete opt-ins active, the agent must explicitly call `ol_email_send_draft(draft_id)` / `ol_email_delete(message_id)` with the specific id. There is no path where an agent's tool call results in a sent email or deleted message without the human first being able to see the target in Outlook.
 
 The threat model is "your local OS account is trusted" — same as `~/.ssh/id_rsa`, `gh` tokens, `aws` config. The tool isn't designed to defend against host compromise; it's designed to keep audit trails honest under normal use.
 

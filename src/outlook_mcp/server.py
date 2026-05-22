@@ -45,6 +45,7 @@ from outlook_mcp.tools.calendar_discard_event_draft import (
 from outlook_mcp.tools.calendar_list_events import list_events as _do_calendar_list_events
 from outlook_mcp.tools.calendar_search import search as _do_calendar_search
 from outlook_mcp.tools.email_create_draft import create_draft as _do_email_create_draft
+from outlook_mcp.tools.email_delete import delete_message as _do_email_delete
 from outlook_mcp.tools.email_discard_draft import discard_draft as _do_email_discard_draft
 from outlook_mcp.tools.email_list_drafts import list_drafts as _do_email_list_drafts
 from outlook_mcp.tools.email_list_unread import list_unread as _do_email_list_unread
@@ -74,8 +75,51 @@ def drafts_enabled() -> bool:
     or `false`. There is no implicit default; the operator must
     consciously decide. See issue #37 for the user-side rationale.
     """
-    drafts, _ = validate_consent_config()
-    return drafts
+    return validate_consent_config().drafts
+
+
+def shared_mailboxes_enabled() -> bool:
+    """True iff `OUTLOOK_ALLOW_SHARED_MAILBOXES=true`.
+
+    Optional flag (v0.5, #45): unset/empty = False; existing installs
+    keep their /me-only behaviour. When True, the email read tools
+    accept an optional `mailbox` argument that routes calls to
+    `/users/{upn}/...`, and the OAuth scope adds Mail.ReadWrite.Shared.
+    """
+    return validate_consent_config().shared_mailboxes
+
+
+def delete_enabled() -> bool:
+    """True iff `OUTLOOK_ALLOW_DELETE=true`.
+
+    Optional flag (v0.5, #45): unset/empty = False. When True, the
+    `ol_email_delete` tool is registered. Independent of the other
+    three consent flags — an operator can enable delete on the
+    signed-in mailbox without shared-mailbox access, or read shared
+    mailboxes without enabling delete.
+    """
+    return validate_consent_config().delete
+
+
+def _guard_mailbox(mailbox: str | None) -> None:
+    """Refuse a non-None `mailbox` arg when shared mailboxes are disabled.
+
+    Centralised so each email-tool wrapper just calls this; the runtime
+    error message is consistent across tools. The MCP schema still
+    advertises the `mailbox` parameter on every tool — agents see it
+    and may try to use it. Without this guard the impl would route to
+    `/users/{upn}/...` and Microsoft Graph would 403 with a confusing
+    error; the explicit refusal here tells the operator that it's an
+    XMV-side opt-in flag rather than a Microsoft permission issue.
+    """
+    if mailbox is not None and not shared_mailboxes_enabled():
+        raise PermissionError(
+            "The `mailbox` parameter is only available when "
+            "OUTLOOK_ALLOW_SHARED_MAILBOXES=true. Set the flag in your "
+            ".mcp.json env block (and re-sign-in to grant "
+            "Mail.ReadWrite.Shared on the consent screen) to enable "
+            "shared-mailbox access.",
+        )
 
 
 def register_read_tools(mcp_instance: FastMCP) -> None:
@@ -89,13 +133,17 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
             openWorldHint=False,
         ),
         description=(
-            "Search the signed-in user's mailbox via Microsoft Graph "
-            "$search. Returns matching mails with id, subject, from, "
-            "received-at, snippet, web URL, has-attachments. Read-only "
-            "— does not modify any mailbox state. Filter args: folder "
-            "(well-known name like 'Inbox'/'Drafts' or folder id), "
+            "Search a mailbox via Microsoft Graph $search. Returns "
+            "matching mails with id, subject, from, received-at, "
+            "snippet, web URL, has-attachments. Read-only. Filter args: "
+            "folder (well-known name like 'Inbox'/'Drafts' or folder id), "
             "from_address (sender email), modified_after (ISO date), "
-            "has_attachment (bool)."
+            "has_attachment (bool). "
+            "`mailbox` (optional, default None) targets a shared mailbox "
+            "via its UPN (e.g. 'sekretariat@xmv.de'). Only usable when "
+            "OUTLOOK_ALLOW_SHARED_MAILBOXES=true; otherwise raises. The "
+            "signed-in user must have FullAccess on the target mailbox "
+            "(typically granted via Exchange Add-MailboxPermission)."
         ),
     )
     def ol_email_search(
@@ -105,7 +153,9 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
         modified_after: str | None = None,
         has_attachment: bool | None = None,
         limit: int = 25,
+        mailbox: str | None = None,
     ) -> list[dict[str, Any]]:
+        _guard_mailbox(mailbox)
         return _do_email_search(
             query,
             folder=folder,
@@ -113,6 +163,7 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
             modified_after=modified_after,
             has_attachment=has_attachment,
             limit=limit,
+            mailbox=mailbox,
             profile=_get_profile(),
         )
 
@@ -128,16 +179,22 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
             "first, up to `limit`. Returns each mail with id, subject, "
             "from, received-at, snippet, web URL, has-attachments. "
             "Read-only — does NOT mark any mail read; the user does that "
-            "in Outlook."
+            "in Outlook. "
+            "`mailbox` (optional, default None) targets a shared mailbox "
+            "via its UPN. Only usable when "
+            "OUTLOOK_ALLOW_SHARED_MAILBOXES=true; otherwise raises."
         ),
     )
     def ol_email_list_unread(
         folder: str = "Inbox",
         limit: int = 50,
+        mailbox: str | None = None,
     ) -> list[dict[str, Any]]:
+        _guard_mailbox(mailbox)
         return _do_email_list_unread(
             folder=folder,
             limit=limit,
+            mailbox=mailbox,
             profile=_get_profile(),
         )
 
@@ -155,16 +212,22 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
             "NOT mark the mail read. Pass `include_attachments=True` "
             "to include attachment metadata (id, name, content_type, "
             "size, is_inline); attachment bytes are NOT downloaded "
-            "(deferred to v0.2 ol_email_get_attachment)."
+            "(deferred to v0.2 ol_email_get_attachment). "
+            "`mailbox` (optional, default None) targets a shared mailbox "
+            "via its UPN. Only usable when "
+            "OUTLOOK_ALLOW_SHARED_MAILBOXES=true; otherwise raises."
         ),
     )
     def ol_email_read(
         message_id: str,
         include_attachments: bool = False,
+        mailbox: str | None = None,
     ) -> dict[str, Any]:
+        _guard_mailbox(mailbox)
         return _do_email_read(
             message_id,
             include_attachments=include_attachments,
+            mailbox=mailbox,
             profile=_get_profile(),
         )
 
@@ -600,23 +663,85 @@ def register_send_tools(mcp_instance: FastMCP) -> None:
         return _do_email_send_draft(draft_id, profile=_get_profile())
 
 
+def register_delete_tools(mcp_instance: FastMCP) -> None:
+    """Register `ol_email_delete`. Only invoked when `OUTLOOK_ALLOW_DELETE=true`.
+
+    Independent of the drafts/send chain (closes outlook-mcp #45): an
+    operator might want to delete received messages without enabling
+    drafts at all, or vice versa. The `mailbox` parameter inside the
+    tool has its own guard (`OUTLOOK_ALLOW_SHARED_MAILBOXES`), so the
+    four flags combine cleanly:
+
+      DRAFTS  SEND  SHARED_MAILBOXES  DELETE   → what registers
+      ------- ----- ----------------- -------- --------------------
+      false   *     *                 *        read tools only
+      true    false *                 *        + drafts (no send)
+      true    true  *                 *        + send
+      *       *     true              *        read tools accept mailbox=
+      *       *     *                 true     + ol_email_delete
+    """
+
+    @mcp_instance.tool(
+        annotations=ToolAnnotations(
+            title="Delete Outlook Email",
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+        description=(
+            "Delete a message by Graph id. Destructive — moves the "
+            "message to Deleted Items by default, or to Recoverable "
+            "Items (purges) when `permanent=true`. The user (or admin) "
+            "can restore from Deleted Items via the Outlook web UI "
+            "within the tenant's retention window; permanent=true "
+            "skips that and goes straight to the purges subfolder.\n\n"
+            "Only registered when OUTLOOK_ALLOW_DELETE=true. The "
+            "`mailbox` parameter additionally requires "
+            "OUTLOOK_ALLOW_SHARED_MAILBOXES=true. Idempotent: "
+            "re-deleting an already-deleted message is a no-op "
+            "(Graph 404 swallowed).\n\n"
+            "Returns `{message_id, mailbox, permanent}` for "
+            "audit-trail correlation.\n\n"
+            "Tip: to discard a draft you created via "
+            "ol_email_create_draft, use ol_email_discard_draft "
+            "instead — it enforces per-profile draft ownership."
+        ),
+    )
+    def ol_email_delete(
+        message_id: str,
+        mailbox: str | None = None,
+        permanent: bool = False,
+    ) -> dict[str, Any]:
+        _guard_mailbox(mailbox)
+        return _do_email_delete(
+            message_id,
+            mailbox=mailbox,
+            permanent=permanent,
+            profile=_get_profile(),
+        )
+
+
 def _build_server() -> FastMCP:
     """Build and return a FastMCP server with the right tools registered.
 
-    Validates the consent env vars (`OUTLOOK_ALLOW_DRAFTS` /
-    `OUTLOOK_ALLOW_SEND`) up-front via `validate_consent_config()` —
-    if either is unset or has a non-`true`/`false` value, the function
-    raises `OutlookConsentNotConfiguredError` with a clear onboarding-help
+    Validates all four consent env vars up-front via
+    `validate_consent_config()` — if any strictly-required one is
+    invalid (DRAFTS, SEND-when-DRAFTS=true) or any optional one has a
+    typo (SHARED_MAILBOXES, DELETE), the function raises
+    `OutlookConsentNotConfiguredError` with a clear onboarding-help
     message. The exception is allowed to propagate so the operator
     sees it on stderr; no silent read-only fallback.
     """
-    drafts, send = validate_consent_config()
+    cfg = validate_consent_config()
     server = FastMCP("mcp-server-outlook")
     register_read_tools(server)
-    if drafts:
+    if cfg.drafts:
         register_write_tools(server)
-        if send:
+        if cfg.send:
             register_send_tools(server)
+    if cfg.delete:
+        register_delete_tools(server)
     return server
 
 

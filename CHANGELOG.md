@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`OUTLOOK_ALLOW_SHARED_MAILBOXES=true|false`** (optional, default false) — opts the server into routing email-tool calls to `/users/{upn}/...` when an agent passes a `mailbox` argument. The OAuth scope request adds `Mail.ReadWrite.Shared` so the consent screen shows the expanded surface. `ol_email_search`, `ol_email_list_unread`, `ol_email_read`, and the new `ol_email_delete` all gain an optional `mailbox` parameter (default `None` = signed-in user, unchanged). Closes [#45](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues/45) (shared-mailbox half).
+- **`OUTLOOK_ALLOW_DELETE=true|false`** (optional, default false) — opts the server into registering the new `ol_email_delete` tool. Independent of the drafts/send chain; an operator can enable delete without enabling drafts.
+- **`ol_email_delete(message_id, mailbox=None, permanent=False)`** — destructive MCP tool. `permanent=False` (default) moves the message to Deleted Items via `DELETE`; `permanent=True` skips Deleted Items via `POST .../permanentDelete`, landing in Recoverable Items. Idempotent: re-deleting an already-gone message (Graph 404) is treated as success. Combined with `OUTLOOK_ALLOW_SHARED_MAILBOXES=true`, deletes can target other mailboxes the signed-in user has FullAccess on (typical: Sekretariats-/shared-team-mailbox cleanup). Closes [#45](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues/45) (delete half).
+- **`outlook_mcp.tools._common.mailbox_path(mailbox)`** — internal helper that returns `"me"` or `"users/{quoted-upn}"`. Single source of truth for the /me-vs-/users routing across the four touched tools.
+- **`outlook_mcp.auth.flow.ConsentConfig`** — frozen dataclass returned by `validate_consent_config()` with named `drafts` / `send` / `shared_mailboxes` / `delete` fields. Replaces the previous `tuple[bool, bool]` shape. Internal API; not exported in `outlook_mcp.auth`'s public re-exports.
+
+### Changed
+
+- `validate_consent_config()` returns `ConsentConfig` instead of `tuple[bool, bool]`. All three internal callers (`auth/flow.py:resolve_scopes`, `auth/flow.py:send_enabled`, `server.py:drafts_enabled`, `server.py:_build_server`) updated. External callers of the unchanged top-level `drafts_enabled()` / `send_enabled()` accessors are unaffected.
+
+### Engineering
+
+- 40 new unit tests (mailbox_path encoding, ConsentConfig, scope resolution with new flags, `ol_email_delete` happy paths + 404 idempotence + shared-mailbox routing + permission-error propagation, the `_guard_mailbox` server-side runtime check, `register_delete_tools` gating). Total: 395 unit + integration tests pass.
+
 Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
 
 ## [v0.5.0] — 2026-05-11

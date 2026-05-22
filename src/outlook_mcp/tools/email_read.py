@@ -23,17 +23,26 @@ from typing import Any
 import httpx
 
 from outlook_mcp.auth import get_token
-from outlook_mcp.tools._common import GRAPH_BASE, auth_headers
+from outlook_mcp.tools._common import GRAPH_BASE, auth_headers, mailbox_path
 
 
 def read_email(
     message_id: str,
     *,
     include_attachments: bool = False,
+    mailbox: str | None = None,
     profile: str = "default",
     http: httpx.Client | None = None,
 ) -> dict[str, Any]:
     """Fetch a single mail by Graph id.
+
+    `mailbox=None` (default): the signed-in user's mailbox (`/me/...`).
+    `mailbox="<upn>"`: a shared mailbox the signed-in user has
+    FullAccess on (`/users/{upn}/...`). The runtime guard that turns
+    `mailbox` off when `OUTLOOK_ALLOW_SHARED_MAILBOXES` is unset/false
+    lives in the MCP-tool wrapper (server.py), so callers that bypass
+    the MCP layer must opt in explicitly via the env var or get a
+    Graph-side 403.
 
     Returns a dict with: id, subject, from, to, cc, bcc, reply_to,
     received_at, sent_at, body_text, body_html, web_url, conversation_id,
@@ -42,20 +51,23 @@ def read_email(
     `include_attachments=True`, else None).
 
     Raises:
-        ValueError: empty message_id.
+        ValueError: empty message_id, or empty `mailbox` (non-None but
+            whitespace-only).
         httpx.HTTPStatusError: 404 if the message doesn't exist or is
-            not visible to the signed-in user; other non-2xx propagate.
+            not visible; 403 if `mailbox` is set but the signed-in user
+            has no FullAccess on it; other non-2xx propagate.
         outlook_mcp.auth.AuthRequiredError: no cached token.
     """
     if not message_id or not message_id.strip():
         raise ValueError("ol_email_read requires a non-empty message_id")
 
+    box = mailbox_path(mailbox)
     token = get_token(profile)
     headers = auth_headers(token)
     client = http if http is not None else httpx.Client(timeout=30.0)
     try:
         response = client.get(
-            f"{GRAPH_BASE}/me/messages/{message_id}",
+            f"{GRAPH_BASE}/{box}/messages/{message_id}",
             headers=headers,
             params={
                 "$select": (
@@ -70,7 +82,7 @@ def read_email(
         result = _to_result(message)
         if include_attachments and result.get("has_attachments"):
             attachments_response = client.get(
-                f"{GRAPH_BASE}/me/messages/{message_id}/attachments",
+                f"{GRAPH_BASE}/{box}/messages/{message_id}/attachments",
                 headers=headers,
                 params={"$select": "id,name,contentType,size,isInline"},
             )
