@@ -70,7 +70,7 @@ def test_decode_returns_empty_on_malformed(bad: str) -> None:
 def test_decode_returns_empty_when_payload_is_not_an_object() -> None:
     """A JWT whose payload is a valid JSON array (not object) — we want
     `{}` so .get("tid") returns None, not a list-index crash."""
-    payload_b64 = base64.urlsafe_b64encode(b'[1, 2, 3]').rstrip(b"=").decode()
+    payload_b64 = base64.urlsafe_b64encode(b"[1, 2, 3]").rstrip(b"=").decode()
     token = f"hdr.{payload_b64}.sig"
     assert _decode_jwt_claims(token) == {}
 
