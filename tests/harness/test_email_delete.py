@@ -166,7 +166,7 @@ def _find_by_subject(
     box = mailbox_path(mailbox)
     url = f"{GRAPH_BASE}/{box}/mailFolders/{folder}/messages"
     query_headers = {**headers, "ConsistencyLevel": "eventual"}
-    params = {
+    params: dict[str, str | int] = {
         "$filter": f"contains(subject, '{subject_marker}')",
         "$top": 5,
         "$select": "id,subject",
