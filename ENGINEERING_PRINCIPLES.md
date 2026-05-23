@@ -457,7 +457,7 @@ The record lives in `docs/proposals/`, using the format described in `docs/propo
 - **Why** — the constraints and trade-offs that drove the choice: costs accepted, benefits sought, alternatives discarded.
 - **Consequences for future maintainers** — what assumptions are now baked in; what to revisit if the context changes.
 
-### Why this matters
+### Why Decision Records matter
 
 A new agent (or human maintainer) who inherits the project has no memory of founding conversations. It can read the code. It can read the issue tracker. But it cannot recover the reasoning behind choices that are invisible in the code — *"why is harness wired into CI?" "why this library and not that one?"* — unless someone wrote it down.
 
