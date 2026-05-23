@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
+
+## [v0.6.0] — 2026-05-23
+
 ### Added
 
 - **`OUTLOOK_ALLOW_SHARED_MAILBOXES=true|false`** (optional, default false) — opts the server into routing email-tool calls to `/users/{upn}/...` when an agent passes a `mailbox` argument. The OAuth scope request adds `Mail.ReadWrite.Shared` so the consent screen shows the expanded surface. `ol_email_search`, `ol_email_list_unread`, `ol_email_read`, and the new `ol_email_delete` all gain an optional `mailbox` parameter (default `None` = signed-in user, unchanged). Closes [#45](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues/45) (shared-mailbox half).
@@ -24,8 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 40 new unit tests (mailbox_path encoding, ConsentConfig, scope resolution with new flags, `ol_email_delete` happy paths + 404 idempotence + shared-mailbox routing + permission-error propagation, the `_guard_mailbox` server-side runtime check, `register_delete_tools` gating). Total: 395 unit + integration tests pass.
 - 6 new harness tests against the real Microsoft Graph (`tests/harness/test_email_delete.py`): soft-delete + permanent-delete + 404-idempotency × /me + shared mailbox. Shared-mailbox tests skip unless `OUTLOOK_HARNESS_SHARED_MAILBOX_UPN` is set. Empirically revealed two Graph quirks not visible in mocks: (1) message ids rotate when items move between folders (the immutable-ID feature is opt-in), (2) Graph returns 400 (not 404) for malformed message-id URLs, so 404-idempotency tests must use real round-trip ids.
-
-Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
 
 ## [v0.5.0] — 2026-05-11
 
