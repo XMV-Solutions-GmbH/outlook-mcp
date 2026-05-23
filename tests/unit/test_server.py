@@ -485,32 +485,73 @@ def test_guard_mailbox_allows_none_when_shared_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The default (mailbox=None) is always allowed — that's the unchanged
-    /me code path."""
+    /me code path. Short-circuits before token-fetch, so no fixture needed."""
     from outlook_mcp.server import _guard_mailbox
 
     _set_full_consent(monkeypatch, drafts="false")
-    _guard_mailbox(None)  # no exception
+    _guard_mailbox(None, profile="default")  # no exception
 
 
 def test_guard_mailbox_refuses_non_none_when_shared_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The whole point of the guard: tell the operator about the env-var
-    requirement before Graph returns a confusing 403."""
+    requirement before Graph returns a confusing 403. Short-circuits before
+    token-fetch (config check wins), so no fixture needed."""
     from outlook_mcp.server import _guard_mailbox
 
     _set_full_consent(monkeypatch, drafts="false")
     with pytest.raises(PermissionError, match="OUTLOOK_ALLOW_SHARED_MAILBOXES"):
-        _guard_mailbox("shared@xmv.de")
+        _guard_mailbox("shared@xmv.de", profile="default")
 
 
-def test_guard_mailbox_allows_non_none_when_shared_enabled(
+def test_guard_mailbox_allows_non_none_when_shared_enabled_and_work_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """SHARED on + work/school token → mailbox accepted. Requires faking a
+    work/school JWT (tid != consumer GUID) into the token-fetch path."""
     from outlook_mcp.server import _guard_mailbox
 
     _set_full_consent(monkeypatch, drafts="false", shared="true")
-    _guard_mailbox("shared@xmv.de")  # no exception
+    monkeypatch.setattr(
+        "outlook_mcp.server.get_token",
+        lambda profile="default": _fake_jwt_with_tid("00000000-0000-0000-0000-000000000001"),
+    )
+    _guard_mailbox("shared@xmv.de", profile="default")  # no exception
+
+
+def test_guard_mailbox_refuses_personal_account_even_when_shared_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The new #45-personal-account guard: even with SHARED_MAILBOXES=true,
+    a consumer token can't drive `/users/{upn}/...` (Microsoft platform
+    restriction, not XMV policy). Error message names the actual
+    constraint."""
+    from outlook_mcp.auth.account_type import CONSUMER_TENANT_ID
+    from outlook_mcp.server import _guard_mailbox
+
+    _set_full_consent(monkeypatch, drafts="false", shared="true")
+    monkeypatch.setattr(
+        "outlook_mcp.server.get_token",
+        lambda profile="default": _fake_jwt_with_tid(CONSUMER_TENANT_ID),
+    )
+    with pytest.raises(PermissionError, match="personal Microsoft account"):
+        _guard_mailbox("shared@example.com", profile="default")
+
+
+def _fake_jwt_with_tid(tid: str) -> str:
+    """Compose a 3-segment JWT-shaped string with the given `tid` claim.
+
+    Signature is junk — `is_personal_account()` decodes claims without
+    verification (the token already passed Microsoft's checks upstream;
+    this helper only needs to round-trip the claim for tests).
+    """
+    import base64
+    import json
+
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).rstrip(b"=").decode()
+    payload = base64.urlsafe_b64encode(json.dumps({"tid": tid}).encode()).rstrip(b"=").decode()
+    return f"{header}.{payload}.sig"
 
 
 # ── register_delete_tools / ol_email_delete registration ──────────────────

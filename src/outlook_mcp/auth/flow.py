@@ -58,7 +58,15 @@ from mcp_microsoft_graph_auth.tokens import CachedToken
 # request** — see `resolve_scopes()` below for the lazy-request semantic.
 # Override via OUTLOOK_CLIENT_ID for tenants with strict app-allowlisting.
 DEFAULT_CLIENT_ID = "5df367d9-4c9b-44fd-9f84-0b4fb1f1268a"
-DEFAULT_AUTHORITY_TENANT = "organizations"
+# `common` accepts both AzureAD (work/school) AND personal Microsoft
+# accounts (outlook.com / hotmail.com / live.com). The XMV-hosted app
+# registration has `signInAudience=AzureADandPersonalMicrosoftAccount`
+# since v0.7 (#48), so the consent screen lets consumer accounts
+# through. Multi-tenant B2B is unaffected — `common` is a superset of
+# `organizations`. Personal-account-only tools (none today) or
+# work/school-only tools (the `mailbox` parameter on email tools)
+# guard at the call site via `is_personal_account()`.
+DEFAULT_AUTHORITY_TENANT = "common"
 
 # Env var that opts the running MCP server into requesting Mail.Send at
 # OAuth time (and registering ol_email_send_draft as an MCP tool). When

@@ -147,6 +147,20 @@ In v0.2, draft tools become available so the agent can write the reply email or 
 - **Token storage** is auto-detected at first use: OS keyring (macOS Keychain / Windows Credential Locker / Linux Secret Service) when available, mode-0600 plain JSON file as fallback (same convention as `gh auth`, `aws configure`). Optional encryption with `OUTLOOK_TOKEN_PASSPHRASE` for paranoid setups or CI.
 - **Multi-customer / multi-tenant**: separate `OUTLOOK_PROFILE` per tenant, each with its own token cache.
 
+#### Supported account types
+
+Both **Microsoft 365 work / school accounts** AND **personal Microsoft accounts** (outlook.com / hotmail.com / live.com / msn.com) are supported. The default sign-in flow uses the `/common` authority endpoint which accepts both.
+
+Most tool surface is identical across the two account types — `/me/messages`, `/me/events`, `/me/mailFolders/...` work everywhere. One platform-level difference:
+
+| Feature | Work / school | Personal |
+|---|---|---|
+| Mail + Calendar read / search / draft / send | ✅ | ✅ |
+| `ol_email_delete` (incl. permanentDelete) | ✅ | ✅ |
+| `mailbox=` parameter on email tools (shared mailbox via FullAccess-Delegate) | ✅ (with `OUTLOOK_ALLOW_SHARED_MAILBOXES=true`) | ❌ — Microsoft doesn't expose shared mailboxes on consumer identities |
+
+When a personal-account agent calls a tool with a non-None `mailbox=`, the MCP server refuses client-side with a clear message instead of letting Microsoft return a confusing 403.
+
 #### Required Microsoft Graph scopes (delegated)
 
 - `Mail.Read` — read inbox + folders

@@ -92,18 +92,31 @@ jobs:
       - name: Install package + dev dependencies
         run: uv sync --extra dev
 
-      - name: Restore harness token cache from secret
+      - name: Restore harness token cache from secret (work/school)
         env:
           TOKEN_B64: ${{ secrets.OUTLOOK_HARNESS_TOKEN_JSON }}
         run: |
           if [ -z "$TOKEN_B64" ]; then
-            echo "::warning::OUTLOOK_HARNESS_TOKEN_JSON not set — harness tests will be skipped."
+            echo "::warning::OUTLOOK_HARNESS_TOKEN_JSON not set — work/school harness tests will be skipped."
             exit 0
           fi
           mkdir -p ~/.cache/outlook-mcp/harness
           printf '%s' "$TOKEN_B64" | base64 -d > ~/.cache/outlook-mcp/harness/token.json
           chmod 600 ~/.cache/outlook-mcp/harness/token.json
-          echo "Harness token cache restored ($(wc -c < ~/.cache/outlook-mcp/harness/token.json) bytes)."
+          echo "Work/school harness token cache restored ($(wc -c < ~/.cache/outlook-mcp/harness/token.json) bytes)."
+
+      - name: Restore harness-personal token cache from secret
+        env:
+          TOKEN_B64: ${{ secrets.OUTLOOK_HARNESS_PERSONAL_TOKEN_JSON }}
+        run: |
+          if [ -z "$TOKEN_B64" ]; then
+            echo "::notice::OUTLOOK_HARNESS_PERSONAL_TOKEN_JSON not set — personal-account harness tests will be skipped."
+            exit 0
+          fi
+          mkdir -p ~/.cache/outlook-mcp/harness-personal
+          printf '%s' "$TOKEN_B64" | base64 -d > ~/.cache/outlook-mcp/harness-personal/token.json
+          chmod 600 ~/.cache/outlook-mcp/harness-personal/token.json
+          echo "Personal harness token cache restored ($(wc -c < ~/.cache/outlook-mcp/harness-personal/token.json) bytes)."
 
       - name: Run harness tests against real Microsoft 365
         env:

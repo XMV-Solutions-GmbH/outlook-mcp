@@ -52,8 +52,8 @@ from outlook_mcp.login_state import (
 from outlook_mcp.tools import login_begin as login_begin_module
 from outlook_mcp.tools.login_begin import login_begin
 
-DEVICE_CODE_URL = "https://login.microsoftonline.com/organizations/oauth2/v2.0/devicecode"
-TOKEN_URL = "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+DEVICE_CODE_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode"
+TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 ME_URL = "https://graph.microsoft.com/v1.0/me"
 
 
