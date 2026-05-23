@@ -19,6 +19,7 @@ from outlook_mcp.auth import (
     AGENT_INSTRUCTIONS,
     AuthRequiredError,
     DeviceCodeChallenge,
+    LoginAccountTypeRequiredError,
     _default_prompt,
     get_token,
     interactive_login,
@@ -228,12 +229,12 @@ def test_get_token_explicit_kwarg_beats_env(
 
 @respx.mock
 def test_interactive_login_full_flow_persists_token(store: _MemStore) -> None:
-    base = f"https://login.microsoftonline.com/{DEFAULT_AUTHORITY_TENANT}/oauth2/v2.0"
+    base = "https://login.microsoftonline.com/organizations/oauth2/v2.0"
     respx.post(f"{base}/devicecode").respond(
         json={
             "device_code": "DC-secret",
             "user_code": "USR-CODE",
-            "verification_uri": "https://microsoft.com/devicelogin",
+            "verification_uri": "https://login.microsoft.com/device",
             "expires_in": 900,
             "interval": 1,
             "message": "Go to URL",
@@ -252,6 +253,7 @@ def test_interactive_login_full_flow_persists_token(store: _MemStore) -> None:
 
     captured: list[DeviceCodeChallenge] = []
     cached = interactive_login(
+        account_type="work_or_school",
         store=store,
         prompt=captured.append,
     )
@@ -264,13 +266,13 @@ def test_interactive_login_full_flow_persists_token(store: _MemStore) -> None:
     assert persisted == cached
     assert len(captured) == 1
     assert captured[0].user_code == "USR-CODE"
-    assert captured[0].verification_uri == "https://microsoft.com/devicelogin"
+    assert captured[0].verification_uri == "https://login.microsoft.com/device"
 
 
 @respx.mock
 def test_interactive_login_uses_default_client_id(store: _MemStore) -> None:
     """No OUTLOOK_CLIENT_ID env, no explicit kwarg -> XMV-published default."""
-    base = f"https://login.microsoftonline.com/{DEFAULT_AUTHORITY_TENANT}/oauth2/v2.0"
+    base = "https://login.microsoftonline.com/organizations/oauth2/v2.0"
     devcode_route = respx.post(f"{base}/devicecode").respond(
         json={
             "device_code": "DC",
@@ -291,9 +293,151 @@ def test_interactive_login_uses_default_client_id(store: _MemStore) -> None:
             "token_type": "Bearer",
         },
     )
-    interactive_login(store=store, prompt=lambda _ch: None)
+    interactive_login(account_type="work_or_school", store=store, prompt=lambda _ch: None)
     body = devcode_route.calls.last.request.read().decode()
     assert f"client_id={DEFAULT_CLIENT_ID}" in body
+
+
+# ---------------------------------------------------------------------
+# interactive_login — account_type routing (#49)
+# ---------------------------------------------------------------------
+
+
+def test_interactive_login_no_account_type_no_env_raises(
+    monkeypatch: pytest.MonkeyPatch, store: _MemStore
+) -> None:
+    """Cold start: no account_type, no OUTLOOK_TENANT_ID — must raise the
+    elicit-the-user error rather than fall back to a wrong-URL endpoint."""
+    monkeypatch.delenv("OUTLOOK_TENANT_ID", raising=False)
+    with pytest.raises(LoginAccountTypeRequiredError):
+        interactive_login(store=store, prompt=lambda _ch: None)
+
+
+@respx.mock
+def test_interactive_login_personal_routes_to_consumers(store: _MemStore) -> None:
+    """`account_type="personal"` MUST send the device-code request to
+    /consumers — that's the only authority that returns the personal
+    Device Code landing page (microsoft.com/link)."""
+    base = "https://login.microsoftonline.com/consumers/oauth2/v2.0"
+    devcode_route = respx.post(f"{base}/devicecode").respond(
+        json={
+            "device_code": "DC",
+            "user_code": "U",
+            "verification_uri": "https://www.microsoft.com/link",
+            "expires_in": 1,
+            "interval": 1,
+            "message": "",
+        }
+    )
+    respx.post(f"{base}/token").respond(
+        200,
+        json={
+            "access_token": "AT",
+            "refresh_token": "RT",
+            "expires_in": 3600,
+            "scope": "",
+            "token_type": "Bearer",
+        },
+    )
+    interactive_login(account_type="personal", store=store, prompt=lambda _ch: None)
+    assert devcode_route.called
+
+
+@respx.mock
+def test_interactive_login_work_routes_to_organizations(store: _MemStore) -> None:
+    base = "https://login.microsoftonline.com/organizations/oauth2/v2.0"
+    devcode_route = respx.post(f"{base}/devicecode").respond(
+        json={
+            "device_code": "DC",
+            "user_code": "U",
+            "verification_uri": "https://login.microsoft.com/device",
+            "expires_in": 1,
+            "interval": 1,
+            "message": "",
+        }
+    )
+    respx.post(f"{base}/token").respond(
+        200,
+        json={
+            "access_token": "AT",
+            "refresh_token": "RT",
+            "expires_in": 3600,
+            "scope": "",
+            "token_type": "Bearer",
+        },
+    )
+    interactive_login(account_type="work_or_school", store=store, prompt=lambda _ch: None)
+    assert devcode_route.called
+
+
+@respx.mock
+def test_interactive_login_env_var_satisfies_requirement_legacy(
+    monkeypatch: pytest.MonkeyPatch, store: _MemStore
+) -> None:
+    """Legacy escape hatch: OUTLOOK_TENANT_ID set → no account_type
+    required. Existing power-user setups must keep working."""
+    monkeypatch.setenv("OUTLOOK_TENANT_ID", "consumers")
+    base = "https://login.microsoftonline.com/consumers/oauth2/v2.0"
+    respx.post(f"{base}/devicecode").respond(
+        json={
+            "device_code": "DC",
+            "user_code": "U",
+            "verification_uri": "https://www.microsoft.com/link",
+            "expires_in": 1,
+            "interval": 1,
+            "message": "",
+        }
+    )
+    respx.post(f"{base}/token").respond(
+        200,
+        json={
+            "access_token": "AT",
+            "refresh_token": "RT",
+            "expires_in": 3600,
+            "scope": "",
+            "token_type": "Bearer",
+        },
+    )
+    cached = interactive_login(store=store, prompt=lambda _ch: None)
+    assert cached.access_token == "AT"
+
+
+@respx.mock
+def test_interactive_login_explicit_tenant_beats_account_type(
+    monkeypatch: pytest.MonkeyPatch, store: _MemStore
+) -> None:
+    """Test seam: `tenant=...` kwarg overrides account_type — useful
+    for harness tests that want to pin a specific authority without
+    going through the friendly mapping."""
+    monkeypatch.delenv("OUTLOOK_TENANT_ID", raising=False)
+    base = "https://login.microsoftonline.com/my-custom-tenant/oauth2/v2.0"
+    devcode_route = respx.post(f"{base}/devicecode").respond(
+        json={
+            "device_code": "DC",
+            "user_code": "U",
+            "verification_uri": "https://...",
+            "expires_in": 1,
+            "interval": 1,
+            "message": "",
+        }
+    )
+    respx.post(f"{base}/token").respond(
+        200,
+        json={
+            "access_token": "AT",
+            "refresh_token": "RT",
+            "expires_in": 3600,
+            "scope": "",
+            "token_type": "Bearer",
+        },
+    )
+    interactive_login(
+        account_type="personal",  # would route to /consumers
+        tenant="my-custom-tenant",  # ...but this wins
+        store=store,
+        prompt=lambda _ch: None,
+    )
+    assert devcode_route.called
 
 
 # ---------------------------------------------------------------------

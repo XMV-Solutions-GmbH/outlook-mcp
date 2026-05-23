@@ -149,7 +149,12 @@ In v0.2, draft tools become available so the agent can write the reply email or 
 
 #### Supported account types
 
-Both **Microsoft 365 work / school accounts** AND **personal Microsoft accounts** (outlook.com / hotmail.com / live.com / msn.com) are supported. The default sign-in flow uses the `/common` authority endpoint which accepts both.
+Both **Microsoft 365 work / school accounts** AND **personal Microsoft accounts** (outlook.com / hotmail.com / live.com / msn.com) are supported. The sign-in flow takes an explicit `account_type` choice:
+
+- **CLI:** `mcp-server-outlook login --account-type {personal|work_or_school}` — required unless `OUTLOOK_TENANT_ID` is set as a power-user override.
+- **MCP tool:** `ol_login_begin(account_type=...)` — the tool description tells the agent to ask the user. Calling without `account_type` returns a structured `LoginAccountTypeRequiredError` with the elicit-the-user instruction.
+
+Internally, `"personal"` routes via Microsoft Identity's `/consumers` authority (Device Code landing page `https://www.microsoft.com/link`); `"work_or_school"` routes via `/organizations` (landing page `https://login.microsoft.com/device`). The previous default `/common` is intentionally avoided — it returns the work/school landing page even for personal-capable apps, which then rejects personal MSA sign-ins.
 
 Most tool surface is identical across the two account types — `/me/messages`, `/me/events`, `/me/mailFolders/...` work everywhere. One platform-level difference:
 

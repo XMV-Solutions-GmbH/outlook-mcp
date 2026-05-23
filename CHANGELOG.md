@@ -10,14 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Personal Microsoft accounts supported** (outlook.com / hotmail.com / live.com / msn.com). The XMV-hosted Entra app's `signInAudience` was widened from `AzureADMultipleOrgs` to `AzureADandPersonalMicrosoftAccount`, and the default OAuth authority from `/organizations` to `/common`. Multi-tenant B2B (XMV + customer tenants) is unaffected — `/common` is a superset.
+- **`account_type` parameter on the login surface** (CLI `--account-type` and MCP tool `ol_login_begin`) with two values: `"personal"` (outlook.com / hotmail.com / live.com / msn.com) and `"work_or_school"` (M365 tenant accounts incl. B2B guests). The MCP tool description and the `LoginAccountTypeRequiredError` message both carry an `AGENT_INSTRUCTIONS:` marker so MCP clients can pattern-match the elicit-the-user UX. Closes [#49](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues/49).
+- **`account_type_to_tenant(account_type)`** helper exported from `outlook_mcp.auth.flow` — maps `"personal"`→`"consumers"`, `"work_or_school"`→`"organizations"`. Strict (`ValueError` on typo).
+- **`LoginAccountTypeRequiredError`** exception with a default agent-readable message naming both valid values verbatim.
 - **`outlook_mcp.auth.is_personal_account(token)`** — JWT-claims-based detector. Returns `True` iff the token's `tid` matches the global consumer tenant GUID. Used by tool guards to refuse Microsoft-platform-restricted features on consumer identities with clear messages rather than confusing 403s.
 - **`outlook_mcp.auth.signed_in_account_type(token)`** → returns `"personal"` or `"work_or_school"`. Stable label for structured logs and error messages.
-- **Harness profile `harness-personal`** — separate token cache + matching `OUTLOOK_HARNESS_PERSONAL_TOKEN_JSON` repo secret. `scripts/renew-harness-token.sh` accepts an optional profile arg (`harness` or `harness-personal`) to drive whichever flow is being refreshed. Personal-account harness tests skip silently if the token cache is absent.
+- **Personal Microsoft accounts supported** (outlook.com / hotmail.com / live.com / msn.com). The XMV-hosted Entra app's `signInAudience` was widened from `AzureADMultipleOrgs` to `AzureADandPersonalMicrosoftAccount`. Multi-tenant B2B (XMV + customer tenants) is unaffected.
+- **Harness profile `harness-personal`** — separate token cache + matching `OUTLOOK_HARNESS_PERSONAL_TOKEN_JSON` repo secret. `scripts/renew-harness-token.sh` takes an optional profile arg (`harness` → `--account-type work_or_school`, `harness-personal` → `--account-type personal`) — no more env-var hacks. Personal-account harness tests skip silently if the token cache is absent.
 
 ### Changed
 
-- `_guard_mailbox()` extended: when `OUTLOOK_ALLOW_SHARED_MAILBOXES=true` AND the signed-in account is a personal MSA, the `mailbox` parameter is now refused with a Microsoft-platform-restriction error message (FullAccess-Delegate via Exchange's `Add-MailboxPermission` only exists for work/school accounts). Operator policy still takes precedence — when the flag is `false`, that's still the error message.
+- **`is_personal_account()` recognises Microsoft Graph opaque tokens** (`EwBI…` / `EwBY…`) as personal. Pre-v0.7 it returned `False` for opaque tokens — that classified real personal MSA sign-ins as "work/school" and silently bypassed the platform-restriction guards. Fix: any non-empty non-3-segment access token is now treated as personal; empty strings and unparseable 3-segment tokens still default to work/school for malformed-input safety.
+- **Device Code authority routing**: `interactive_login` / `ol_login_begin` now route via `/consumers` for personal accounts and `/organizations` for work/school. Microsoft Identity's `/common` was previously the default but returns the work/school landing page (`login.microsoft.com/device`) even for personal-capable apps — that page rejects personal MSAs. The new routing fixes personal-account sign-in end-to-end without requiring per-user env vars.
+- `_guard_mailbox()` extended: when `OUTLOOK_ALLOW_SHARED_MAILBOXES=true` AND the signed-in account is a personal MSA, the `mailbox` parameter is refused with a Microsoft-platform-restriction error message (FullAccess-Delegate via Exchange's `Add-MailboxPermission` only exists for work/school accounts). Operator policy still takes precedence — when the flag is `false`, that's still the error message.
+
+### Deprecated
+
+- `OUTLOOK_TENANT_ID` env var remains supported as a power-user / CI escape hatch but is no longer the recommended way to pick the Device Code authority. Use `--account-type` (CLI) or the `account_type` MCP-tool parameter instead.
 
 Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
 

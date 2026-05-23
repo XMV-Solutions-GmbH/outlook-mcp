@@ -96,9 +96,40 @@ def test_missing_tid_returns_false() -> None:
     assert is_personal_account(token) is False
 
 
-def test_opaque_token_returns_false() -> None:
-    """An opaque (non-JWT) token can't be decoded — conservative default."""
-    assert is_personal_account("opaque-string-not-a-jwt") is False
+def test_opaque_token_returns_true_personal() -> None:
+    """Microsoft Graph issues opaque (non-JWT, `Ew...`) tokens for personal
+    Microsoft accounts; work/school accounts always get JWTs. Pre-v0.7
+    (#49) this returned False — that broke personal-account guards
+    because the real personal tokens never matched the JWT path."""
+    assert is_personal_account("opaque-string-not-a-jwt") is True
+
+
+def test_real_msa_opaque_token_returns_true() -> None:
+    """Realistic shape: Microsoft-Account compact tokens start with `Ew`
+    and contain no dots. Captured via curl against personal-account
+    sign-in during the v0.7 personal-account harness work."""
+    msa_token = "EwBYBMl6BAAU9BatlgMxts2T1B5e3Mucgfs4jcAAAQgt6w34yx8drVYaBv72"
+    assert is_personal_account(msa_token) is True
+
+
+def test_empty_token_returns_false() -> None:
+    """Empty access_token is malformed input (would have failed the
+    Graph round-trip already). Defaults to work/school to avoid
+    flipping arbitrary failure modes."""
+    assert is_personal_account("") is False
+
+
+def test_two_segment_token_returns_true() -> None:
+    """Any non-3-segment non-empty token is treated as opaque (personal).
+    Two-segment input is non-empty and not-a-JWT, so it counts."""
+    assert is_personal_account("foo.bar") is True
+
+
+def test_three_segment_unparseable_returns_false() -> None:
+    """3-segment shape but the payload can't decode — preserve pre-v0.7
+    fall-through to work/school so we don't accidentally widen the
+    interpretation to 'anything weird is personal'."""
+    assert is_personal_account("hdr.@@@invalid_base64@@@.sig") is False
 
 
 def test_consumer_tid_case_sensitive() -> None:
@@ -131,3 +162,8 @@ def test_account_type_label_is_stable_string() -> None:
     work_token = _jwt({"tid": "00000000-0000-0000-0000-000000000001"})
     assert signed_in_account_type(consumer_token) in {"personal", "work_or_school"}
     assert signed_in_account_type(work_token) in {"personal", "work_or_school"}
+
+
+def test_account_type_label_opaque_is_personal() -> None:
+    """Regression: opaque tokens now map to the `personal` label (#49)."""
+    assert signed_in_account_type("EwBYBMl6BAAU9BatlgMxts") == "personal"

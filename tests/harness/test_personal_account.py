@@ -70,10 +70,14 @@ def test_personal_token_decodes_as_personal_account() -> None:
 
 
 def test_personal_token_can_call_graph_me() -> None:
-    """/me works against personal accounts via Graph v1.0 (uses the
-    `/common` authority that the v0.7 default sends to). Proves the
+    """/me works against personal accounts via Graph v1.0. Proves the
     end-to-end auth pipeline for personal accounts: token-cache →
-    refresh-if-expired → Bearer-on-Graph → 200 OK."""
+    refresh-if-expired → Bearer-on-Graph → 200 OK.
+
+    Since #49 the initial sign-in routes via /consumers (not /common —
+    which returns the wrong landing page); refresh-token round-trips
+    still go via /common, which is fine because the cache token
+    already binds the issuer."""
     _skip_if_no_personal_harness()
     response = httpx.get(
         "https://graph.microsoft.com/v1.0/me",
