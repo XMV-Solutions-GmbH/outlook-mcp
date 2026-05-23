@@ -6,9 +6,9 @@ SPDX-FileContributor: David Koller <david.koller@xmv.de>
 
 # Engineering Principles
 
-A reusable, project-agnostic baseline for software development. These principles apply to every project where this file is dropped in. **Read this file before starting any task; it is the default behaviour, with project-specific overrides in `CLAUDE.md` (or equivalent).**
+A reusable, project-agnostic baseline for software development. These principles apply to every project where this file is dropped in. **Read this file before starting any task; it is the default behaviour, with project-specific overrides in `AGENTS.md` (or equivalent).**
 
-This file is intentionally generic — nothing in here mentions a specific product, customer, or technology. Project-specific conventions go in `CLAUDE.md`.
+This file is intentionally generic — nothing in here mentions a specific product, customer, or technology. Project-specific conventions go in `AGENTS.md`.
 
 ---
 
@@ -18,19 +18,19 @@ This file evolves as we discover better ways to work. The maintenance contract:
 
 - When a principle is **added or refined** in one project, evaluate whether to **back-port it** to other projects that already carry a copy of this file.
 - When **starting a new project** with the same maintainer, check for this file; if it's missing, offer to seed it from the most up-to-date canonical version.
-- Avoid project-specific drift. If you find yourself adding "for project X, do Y instead", that belongs in `CLAUDE.md`, not here.
+- Avoid project-specific drift. If you find yourself adding "for project X, do Y instead", that belongs in `AGENTS.md`, not here.
 
 ---
 
 ## 1. Language
 
-All in-repo content is in **English**: code, comments, docstrings, file and directory names, commit messages, PR titles and descriptions, configuration values, log messages, error strings, exception messages.
+All in-repo content is in **British English (en-GB)**: code, comments, docstrings, file and directory names, commit messages, PR titles and descriptions, configuration values, log messages, error strings, exception messages. Use *colour* not *color*, *initialise* not *initialize*, *behaviour* not *behavior*, *licence* (noun) and *license* (verb).
 
 Chat / spoken communication may be in any language — only what lands in git is governed.
 
-When you find non-English content in any file you touch, translate it as part of the current task. Domain terms with no clean English equivalent are translated, with the original noted once in a glossary.
+When you find non-English (or American-English) content in any file you touch, translate it as part of the current task. Domain terms with no clean English equivalent are translated, with the original noted once in a glossary.
 
-**Exempt from this rule:** translation/localization files containing strings shown to end users of the application in a multilingual context (e.g. `locales/de.json`, `i18n/fr/messages.po`, gettext `.po` catalogues). The non-English content in these files is the entire point of the file. The English source strings (and the keys, comments, and metadata around them) still follow this rule.
+**Exempt from this rule:** translation/localisation files containing strings shown to end users of the application in a multilingual context (e.g. `locales/de.json`, `i18n/fr/messages.po`, gettext `.po` catalogues). The non-English content in these files is the entire point of the file. The English source strings (and the keys, comments, and metadata around them) still follow this rule.
 
 ---
 
@@ -38,41 +38,46 @@ When you find non-English content in any file you touch, translate it as part of
 
 Every project must keep durable records of:
 
-- **Planned work** — what's coming, what's in flight (TODO list).
-- **Problems encountered + how they were solved** (issues log).
+- **Planned work** — what's coming, what's in flight (the backlog).
+- **Problems encountered + how they were solved** (the issues log).
 
 The point of the issues log: **future-you searches past pain**. If the same root cause surfaces twice, you should be reading the prior resolution, not re-discovering it.
 
 ### Tooling
 
+**Default for XMV OSS projects: GitHub Issues + a repo-bound GitHub Project.** Both planned work and resolved-issue records live there from day one. The repo's GitHub Project is the canonical board; issues are the canonical units of work.
+
+This is a deliberate update over the older "markdown TODO/ISSUES files in `docs/`" pattern that early XMV projects used. We learned that the markdown files drift, get forgotten, and lack the search / linking / assignment / labels / cross-repo references that make a backlog actually useful. GitHub gives those for free, and the repo-bound Project keeps the board scoped tightly to the repo it serves.
+
 | Situation | Use |
 |---|---|
-| Project has Linear / Jira / GitHub Issues set up | Use it. |
-| No external tool yet | Use repo-root markdown: `TODO.md` for planned work, `ISSUES.md` for problems-and-resolutions. |
-| External tool gets set up later | Migrate the markdown contents over, preserving original IDs as references. Keep the markdown as a frozen historical snapshot, or delete once verified migrated. |
+| New XMV OSS project | **GitHub Issues + a repo-bound GitHub Project from day one.** No markdown TODO/ISSUES files. |
+| Existing XMV project still on markdown tracking | Migrate to GitHub Issues; keep the markdown file as a frozen historical artefact (read-only), do not extend it. |
+| External tracker (Linear / Jira) is mandated by the customer | Use it instead of GitHub Issues. The principle is "one canonical tracker per project", not "GitHub specifically". |
+| Pre-bootstrap moment, before the repo even exists | Capture decisions in chat or a scratch note, but file the issues immediately once the repo is up. |
 
-External tools win when available — search, assignment, comments, integrations.
-
-### TODO format
-
-Each TODO has:
-
-- **ID** — sequential, zero-padded (`#001`, `#002`, …). When migrating to an external tool, prefix with the external project key.
-- **Title** — short, English.
-- **Status** — from § 3.
-- **Notes** — bullets capturing context, decisions, and outcome.
+External tools win because of search, assignment, labels, comments, milestones, cross-repo references, and integrations with PRs / CI / releases. Markdown files lose on every one of those.
 
 ### Issue format
 
 Each issue has:
 
-- **ID** — same scheme as TODOs, optionally prefixed with `ISS-` for clarity.
 - **Title** — short, English.
-- **Date encountered** — ISO date.
+- **Body** — at minimum: **Context** (what / why), **Acceptance criteria** (checkbox list of observable outcomes), **Out of scope** (what this issue does *not* cover), **Links** (related issues, PRs, docs).
+- **Labels** — `type:feat` / `type:fix` / `type:chore` / `type:docs` / `type:test`; `area:<component>`; `priority:p0` / `p1` / `p2`. Add an `agent:<tool>` label (e.g. `agent:codex`, `agent:claude`) when an AI agent is the executor.
+- **Milestone** — maps to a release where applicable (`v0.1.0 — MVP`, `v0.2.0`, …).
+- **Status** — managed via the repo's GitHub Project columns; mirrors the legend in § 3.
+
+### Resolved-issue records (post-mortems)
+
+When an issue documents a problem-and-resolution (a bug, an incident, a near-miss), close it with a comment that captures:
+
 - **Symptom** — what was observed.
-- **Root cause** — what was actually wrong (avoid the temptation to describe the fix here).
-- **Resolution** — what fixed it; link to commit/PR if applicable.
+- **Root cause** — what was actually wrong (resist the temptation to describe the fix here).
+- **Resolution** — what fixed it; link the merging PR / commit.
 - **Prevention** — what changed so it won't recur (test added, monitoring, doc, design change).
+
+This is the searchable post-mortem trail. The PR's commit message is *not* a substitute — commit messages describe the change, not the historical incident. Future-you searches issues, not git log.
 
 ---
 
@@ -157,6 +162,18 @@ The agent's working machine has all credentials and tools it needs to test again
 
 Tests are runnable from the agent's machine, not exclusively from CI. CI is for repeatable verification of merged changes; the agent's local environment is for **iterative development of those changes in the first place**.
 
+**Testing is not CI's job.** Before any non-trivial push, run the relevant test layers locally — every human developer does this, and every AI agent must too. The local commands are project-specific (`make test`, `pytest`, `cargo test`, `go test`, `npm test`, …); what matters is that the agent runs them all before the push, not the spelling.
+
+Three reasons this is non-negotiable:
+
+1. **Speed of feedback.** A failing test that takes 30 seconds to surface locally takes 5–25 minutes via CI (queue + cold-start + sequential matrix + retries). Multiplied across the day, the difference is the difference between "ship a clean fix in one push" and "trial-and-error on green-checks-bingo via 8 force-pushes."
+2. **Cost of CI minutes.** Hosted runners (GitHub Actions, GitLab CI, your own self-hosted fleet) and metered AI-agent runtimes bill by the minute. Burning CI minutes to discover a typo a type-checker or linter would have caught locally is throwing money at avoidance of a 30-second discipline. The cost is real and metered; treat it as such.
+3. **CI as confirmation, not discovery.** When CI fails on a push, that should be a surprise — a regression in something local tests didn't cover, or an environment-specific issue (different OS, different language version, missing credentials the agent didn't have). CI catching an obvious local bug means the local test step was skipped, which is a discipline failure, not a CI feature.
+
+The push-without-local-test pattern is sometimes rationalised as "CI is fast enough" or "I trust the lint passes." Both are wrong: CI is slow at the granularity of iteration, and obvious bugs ship through lint constantly. **If running the test suite locally is painful, fix the dev-experience setup before the next feature commit** — it is paying off interest on the slowest part of the workflow.
+
+Special note for AI agents: the temptation to push-and-watch is high because watching feels like progress; it is not. Each iteration that goes through CI when it could have gone through a local test run costs the maintainer an order of magnitude more attention and time.
+
 ### Required in every App Concept
 
 Every project's App Concept (or equivalent product/architecture document) must include a **Testability** section that names all three layers explicitly:
@@ -194,7 +211,7 @@ When deriving an issue backlog from a concept document for an AI-driven project:
 
 ### Anti-patterns
 
-- Running tests **only** from CI. The AI gets no feedback loop. Provide local harness access on the agent's machine.
+- **Running tests only from CI.** The agent gets no feedback loop, every iteration burns billable CI minutes, and trivial bugs that a type-checker / unit-test runner / linter would have caught in 30 s instead waste 15+ minutes of queue-and-matrix CI time per push. CI is for confirmation, not discovery. Provide local harness access on the agent's machine and use it before every push.
 - Treating "integration" and "harness" as the same thing. They aren't. Mocks-at-boundary integration tests are valuable but they validate our assumptions, not the external API. Both layers exist for different reasons; you need both.
 - Letting feature tickets land before the harness layer works. The first time the code talks to the real system is the worst time to discover the auth flow is broken or the scope is wrong.
 - Using a powerful test account "because it's faster to set up." The harness account is least-privilege scoped to the sandbox, full stop. A leaked admin token from the agent's machine is not an acceptable failure mode.
@@ -251,10 +268,26 @@ Every project must have, at repo root or under `docs/`:
 | App Concept (e.g. `docs/app-concept.md`) | What the product does, who for, why. Includes a Testability section per § 5. |
 | Architecture (e.g. `docs/architecture.md`) | Target-state of how the system runs. |
 | Secret management (e.g. `docs/secrets.md`) | How secrets are generated, stored, propagated, rotated. |
-| `CLAUDE.md` (or equivalent) | Project-specific conventions; references this file for the generic ones. |
-| `TODO.md`, `ISSUES.md` | Until external tracker is set up. |
+| `AGENTS.md` (or equivalent) | Project-specific conventions, tech stack, and AI-agent behaviour for this repo. Referenced by tool-specific files (`CLAUDE.md`, `.github/copilot-instructions.md`) which are pointers back here. |
+
+The backlog and the resolved-issue log live in **GitHub Issues + the repo-bound GitHub Project** (see § 2), not in markdown files. Older XMV repos may still carry a frozen `docs/todo.md`; do not extend it.
 
 Docs are kept in sync with reality. **Stale docs are a bug** — fix as part of the change that makes them stale.
+
+### README structure
+
+A `README.md` is the first thing a new reader (human or agent) sees. The skeleton that pays back across XMV OSS projects:
+
+1. **Title + badges** (licence, build, coverage, package version, contributions welcome).
+2. **One-sentence pitch as a blockquote**, immediately under the badges. Under 200 characters. This shows up unrendered on package registries and in search results, so it has to stand alone.
+3. **"What is this for?"** — two or three paragraphs of the user's actual situation: what they have, what they want to do, why the obvious alternatives don't quite fit. Concrete and specific (named artefacts, named constraints) before any feature list. End with one sentence on how this project solves it differently.
+4. **Features** — what each feature does for the user, not how it's implemented.
+5. **Installation** — copy-pasteable, common path first.
+6. **Use case** — a short dialogue or worked example showing the headline workflow. Make it the golden path, not an edge case.
+7. **Usage** — detailed, one sub-section per major surface.
+8. **Documentation** — link out to the deeper docs.
+9. **Contributing** — link to `CONTRIBUTING.md`.
+10. **Licence** — name the licence(s); link the files.
 
 ---
 
@@ -285,12 +318,12 @@ The principle: a competent reader of the script should understand each step with
 
 Every change leaves the repo in a state where the next agent — human or AI — can pick up and continue **without asking questions**.
 
-- TODO and Issue logs reflect current state, including in-flight work.
+- The backlog and the resolved-issue records (GitHub Issues per § 2) reflect current state, including in-flight work.
 - Status reflects reality (no `DONE` items that aren't actually done).
 - Decisions made in conversation that affect the codebase are written into the relevant doc, not left in chat.
-- Open questions are recorded as `(TBD)` markers in the doc + `TODO` items, not held in someone's head.
+- Open questions are recorded as `(TBD)` markers in the doc and as open issues in the tracker, not held in someone's head.
 
-A new agent should be able to read `CLAUDE.md` + this file + recent commits + `TODO.md` (or the external tracker) + `ISSUES.md` and know what to do next.
+A new agent should be able to read `AGENTS.md` + this file + recent commits + the repo's GitHub Project board and know what to do next.
 
 ---
 
@@ -298,7 +331,7 @@ A new agent should be able to read `CLAUDE.md` + this file + recent commits + `T
 
 Every project has:
 
-- A `LICENSE` file at the repo root (and, for dual-licensed projects, `LICENSE-MIT` / `LICENSE-APACHE` alongside it). The specific license is project-specific and named in `CLAUDE.md`.
+- A `LICENSE` file at the repo root (and, for dual-licensed projects, `LICENSE-MIT` / `LICENSE-APACHE` alongside it). The specific licence is project-specific and named in `AGENTS.md`.
 - A `README.md` "License" section that names the license and links to the file. A shields.io-style badge is encouraged for visibility.
 - File-level attribution per **SPDX** (the open-source standard), so each source file declares its license and contributors machine-readably.
 
@@ -312,7 +345,7 @@ SPDX-FileCopyrightText: <year> <copyright holder>
 SPDX-FileContributor: <name> <<email>>
 ```
 
-- The license identifier and copyright holder are project-specific (set in `CLAUDE.md`).
+- The licence identifier and copyright holder are project-specific (set in `AGENTS.md`).
 - The first `SPDX-FileContributor` line is set when the file is **created** and is **never overwritten**. This honours the German *Urheberrecht* (moral right of authorship), which is inalienable.
 - Subsequent substantial contributors **append** additional `SPDX-FileContributor` lines; they do not replace the original.
 - The agent populates the contributor line from the current `git config user.name` / `user.email`.
