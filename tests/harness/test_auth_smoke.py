@@ -25,7 +25,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from outlook_mcp.auth import get_token
+from outlook_mcp.auth import get_token, is_personal_account
 from outlook_mcp.auth.store import PlainFileTokenStore
 
 HARNESS_PROFILE = "harness"
@@ -62,3 +62,22 @@ def test_get_token_then_call_graph_me() -> None:
     payload = response.json()
     assert payload.get("id"), f"/me missing id: {payload}"
     assert payload.get("userPrincipalName"), f"/me missing userPrincipalName: {payload}"
+
+
+@pytest.mark.skipif(
+    not _harness_cache_path().exists() and not os.environ.get("OUTLOOK_HARNESS_TOKEN_JSON"),
+    reason="Harness token cache missing (see test_get_token_then_call_graph_me).",
+)
+def test_work_school_token_classified_as_work_or_school() -> None:
+    """Symmetric to the personal-account harness: the work/school
+    harness token MUST decode as `work_or_school`, NOT personal (#49).
+    Regression guard for the detector — if the XMV harness tenant ever
+    starts issuing opaque tokens, this would catch it before the
+    Planner / shared-mailbox guards mis-fire."""
+    os.environ.setdefault("OUTLOOK_TOKEN_STORE", "file")
+    token = get_token(profile=HARNESS_PROFILE, store=PlainFileTokenStore())
+    assert is_personal_account(token) is False, (
+        "Harness work/school token was classified as personal — Microsoft "
+        "may have changed the work/school token format, or the harness "
+        "profile was signed in with the wrong account."
+    )

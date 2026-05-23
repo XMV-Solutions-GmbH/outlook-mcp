@@ -116,6 +116,77 @@ class OutlookConsentNotConfiguredError(RuntimeError):
     """
 
 
+# v0.7 (#49): the two valid `account_type` values. Stable contract —
+# the strings are emitted in tool descriptions, error messages, CLI
+# help, and tests; downstream code matches on them.
+ACCOUNT_TYPE_PERSONAL = "personal"
+ACCOUNT_TYPE_WORK_OR_SCHOOL = "work_or_school"
+VALID_ACCOUNT_TYPES: tuple[str, ...] = (ACCOUNT_TYPE_PERSONAL, ACCOUNT_TYPE_WORK_OR_SCHOOL)
+
+
+class LoginAccountTypeRequiredError(RuntimeError):
+    """Raised when `interactive_login` / `ol_login_begin` is invoked
+    without `account_type` AND no `OUTLOOK_TENANT_ID` env-var override.
+
+    Microsoft Identity's `/common` authority returns the work/school
+    Device Code landing page (`https://login.microsoft.com/device`)
+    even for apps that accept personal accounts — and that landing page
+    rejects personal MSAs. The two options route differently:
+
+    - `account_type="personal"` → `/consumers` authority → personal
+      Device Code landing page (`https://www.microsoft.com/link`).
+    - `account_type="work_or_school"` → `/organizations` authority →
+      work/school Device Code landing page
+      (`https://login.microsoft.com/device`).
+
+    There's no way to auto-detect the user's account kind before
+    sign-in (we have no identity claim yet), so the caller MUST
+    decide. The MCP-tool layer raises this with an agent-readable
+    message so the MCP client can ask the user, then retry the tool
+    call with the answer.
+    """
+
+    AGENT_MESSAGE = (
+        "Required parameter `account_type` is missing. "
+        "This determines which Microsoft Identity Device Code endpoint "
+        "to route to — there is no auto-detection before sign-in.\n\n"
+        "Valid values:\n"
+        '  "personal"        — outlook.com / hotmail.com / live.com / msn.com\n'
+        '  "work_or_school"  — any Microsoft 365 tenant account (incl. B2B guests)\n\n'
+        "AGENT_INSTRUCTIONS: Ask the user which Microsoft account they want to sign in "
+        "with — a personal Microsoft account (outlook.com / hotmail.com / live.com / "
+        "msn.com) or a work/school Microsoft 365 account. Then call this tool again "
+        "with the matching account_type value."
+    )
+
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(message or self.AGENT_MESSAGE)
+
+
+def account_type_to_tenant(account_type: str) -> str:
+    """Map an `account_type` literal to the Microsoft Identity tenant
+    path that returns the correct Device Code landing page.
+
+    - `"personal"` → `"consumers"` (returns `https://www.microsoft.com/link`)
+    - `"work_or_school"` → `"organizations"` (returns
+      `https://login.microsoft.com/device`)
+
+    Raises `ValueError` for anything else — strict per #49 acceptance
+    criteria; we don't want a typo (`account_type="privat"`) to
+    silently fall through to a wrong endpoint.
+
+    The legacy `"common"` tenant is intentionally NOT a third option:
+    `/common` returns `login.microsoft.com/device` regardless of app
+    audience, which broke personal-account sign-in in v0.6. The two
+    explicit values let us route correctly per case.
+    """
+    if account_type == ACCOUNT_TYPE_PERSONAL:
+        return "consumers"
+    if account_type == ACCOUNT_TYPE_WORK_OR_SCHOOL:
+        return "organizations"
+    raise ValueError(f"account_type must be one of {VALID_ACCOUNT_TYPES!r}; got {account_type!r}.")
+
+
 def _strict_bool_env(name: str) -> bool:
     """Read `name` from the environment and parse strictly.
 
@@ -351,6 +422,8 @@ DEFAULT_SCOPES = _BASE_SCOPES
 DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 
 __all__ = [
+    "ACCOUNT_TYPE_PERSONAL",
+    "ACCOUNT_TYPE_WORK_OR_SCHOOL",
     "ALLOW_DELETE_ENV",
     "ALLOW_DRAFTS_ENV",
     "ALLOW_SEND_ENV",
@@ -360,14 +433,17 @@ __all__ = [
     "DEFAULT_CLIENT_ID",
     "DEFAULT_SCOPES",
     "DEVICE_CODE_GRANT_TYPE",
+    "VALID_ACCOUNT_TYPES",
     "AuthorizationDeniedError",
     "CachedToken",
     "ConsentConfig",
     "DeviceCodeChallenge",
     "DeviceCodeError",
     "DeviceCodeExpiredError",
+    "LoginAccountTypeRequiredError",
     "OutlookConsentNotConfiguredError",
     "RefreshTokenInvalidError",
+    "account_type_to_tenant",
     "poll_for_token",
     "refresh_access_token",
     "request_device_code",

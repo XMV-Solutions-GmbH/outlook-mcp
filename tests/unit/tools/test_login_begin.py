@@ -52,8 +52,10 @@ from outlook_mcp.login_state import (
 from outlook_mcp.tools import login_begin as login_begin_module
 from outlook_mcp.tools.login_begin import login_begin
 
-DEVICE_CODE_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode"
-TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+DEVICE_CODE_URL = "https://login.microsoftonline.com/organizations/oauth2/v2.0/devicecode"
+TOKEN_URL = "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+DEVICE_CODE_URL_CONSUMERS = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode"
+TOKEN_URL_CONSUMERS = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
 ME_URL = "https://graph.microsoft.com/v1.0/me"
 
 
@@ -124,7 +126,7 @@ async def test_login_begin_happy_path() -> None:
     respx.post(TOKEN_URL).respond(200, json=_success_token_json())
     respx.get(ME_URL).respond(json={"userPrincipalName": "anna@xmv.de"})
 
-    result = await login_begin(profile="default")
+    result = await login_begin(profile="default", account_type="work_or_school")
 
     # Non-blocking: returns pending immediately with the user-facing
     # fields the agent needs to surface.
@@ -150,7 +152,7 @@ async def test_login_begin_persists_token_to_store(_redirect_token_store) -> Non
     respx.post(TOKEN_URL).respond(200, json=_success_token_json())
     respx.get(ME_URL).respond(json={"userPrincipalName": "x@x.de"})
 
-    await login_begin(profile="default")
+    await login_begin(profile="default", account_type="work_or_school")
     await _await_task("default")
 
     persisted = (_redirect_token_store / "default" / "token.json").read_text()
@@ -165,7 +167,7 @@ async def test_login_begin_session_in_registry_after_success() -> None:
     respx.post(TOKEN_URL).respond(200, json=_success_token_json())
     respx.get(ME_URL).respond(json={"userPrincipalName": "x@x.de"})
 
-    await login_begin(profile="default")
+    await login_begin(profile="default", account_type="work_or_school")
     session = await _await_task("default")
 
     assert session.status == "success"
@@ -201,7 +203,7 @@ async def test_login_begin_returns_existing_pending_session_idempotent() -> None
     # No outbound HTTP should fire — the existing pending session is
     # returned untouched, no new device-code flow starts.
     with respx.mock(base_url="https://login.microsoftonline.com") as router:
-        result = await login_begin(profile="default")
+        result = await login_begin(profile="default", account_type="work_or_school")
         assert not router.calls, "No new device code flow should start"
 
     assert result["session_id"] == "existing-sid"
@@ -236,7 +238,7 @@ async def test_login_begin_force_cancels_pending_and_starts_fresh() -> None:
     respx.post(TOKEN_URL).respond(200, json=_success_token_json())
     respx.get(ME_URL).respond(json={"userPrincipalName": "x@x.de"})
 
-    result = await login_begin(profile="default", force=True)
+    result = await login_begin(profile="default", account_type="work_or_school", force=True)
     assert result["status"] == "pending"
     assert result["user_code"] == "NEW-CODE"
     assert result["session_id"] != "old-sid"
@@ -260,7 +262,7 @@ async def test_login_begin_user_denies_consent_marks_failed() -> None:
     respx.post(DEVICE_CODE_URL).respond(json=_device_code_response_json())
     respx.post(TOKEN_URL).respond(400, json={"error": "access_denied"})
 
-    pending = await login_begin(profile="default")
+    pending = await login_begin(profile="default", account_type="work_or_school")
     assert pending["status"] == "pending"
 
     session = await _await_task("default")
@@ -274,7 +276,7 @@ async def test_login_begin_device_code_expired_marks_expired() -> None:
     respx.post(DEVICE_CODE_URL).respond(json=_device_code_response_json())
     respx.post(TOKEN_URL).respond(400, json={"error": "expired_token"})
 
-    pending = await login_begin(profile="default")
+    pending = await login_begin(profile="default", account_type="work_or_school")
     assert pending["status"] == "pending"
 
     session = await _await_task("default")
@@ -308,7 +310,7 @@ async def test_login_begin_token_store_failure_marks_failed(
         lambda: _FailingStore(),
     )
 
-    await login_begin(profile="default")
+    await login_begin(profile="default", account_type="work_or_school")
     session = await _await_task("default")
     assert session.status == "failed"
     assert session.error is not None
@@ -324,7 +326,7 @@ async def test_login_begin_does_not_persist_token_on_failure(
     respx.post(DEVICE_CODE_URL).respond(json=_device_code_response_json())
     respx.post(TOKEN_URL).respond(400, json={"error": "access_denied"})
 
-    await login_begin(profile="default")
+    await login_begin(profile="default", account_type="work_or_school")
     await _await_task("default")
     assert not (_redirect_token_store / "default" / "token.json").exists()
 
@@ -343,7 +345,7 @@ async def test_login_begin_works_without_ctx() -> None:
     respx.post(TOKEN_URL).respond(200, json=_success_token_json())
     respx.get(ME_URL).respond(json={"userPrincipalName": "x@x.de"})
 
-    result = await login_begin(profile="default", ctx=None)
+    result = await login_begin(profile="default", account_type="work_or_school", ctx=None)
     assert result["status"] == "pending"
     assert result["user_code"] == "ABCD-EFGH"
 
@@ -364,7 +366,7 @@ async def test_login_begin_signed_in_user_upn_none_when_me_4xx() -> None:
     respx.post(TOKEN_URL).respond(200, json=_success_token_json())
     respx.get(ME_URL).respond(403)
 
-    await login_begin(profile="default")
+    await login_begin(profile="default", account_type="work_or_school")
     session = await _await_task("default")
     assert session.status == "success"
     assert session.signed_in_user_upn is None
@@ -377,7 +379,7 @@ async def test_login_begin_signed_in_user_upn_none_when_me_payload_missing_field
     respx.post(TOKEN_URL).respond(200, json=_success_token_json())
     respx.get(ME_URL).respond(json={"id": "abc-no-upn-field"})
 
-    await login_begin(profile="default")
+    await login_begin(profile="default", account_type="work_or_school")
     session = await _await_task("default")
     assert session.status == "success"
     assert session.signed_in_user_upn is None
@@ -400,8 +402,8 @@ async def test_login_begin_profile_isolation() -> None:
     respx.post(TOKEN_URL).respond(200, json=_success_token_json())
     respx.get(ME_URL).respond(json={"userPrincipalName": "x@x.de"})
 
-    r1 = await login_begin(profile="profile-1")
-    r2 = await login_begin(profile="profile-2")
+    r1 = await login_begin(profile="profile-1", account_type="work_or_school")
+    r2 = await login_begin(profile="profile-2", account_type="work_or_school")
 
     assert r1["user_code"] == "P1-CODE"
     assert r2["user_code"] == "P2-CODE"
@@ -426,7 +428,7 @@ async def test_login_begin_response_has_no_device_code_secret() -> None:
     respx.post(TOKEN_URL).respond(200, json=_success_token_json())
     respx.get(ME_URL).respond(json={"userPrincipalName": "x@x.de"})
 
-    result = await login_begin(profile="default")
+    result = await login_begin(profile="default", account_type="work_or_school")
 
     # Top-level key not present on the synchronous return value.
     assert "device_code" not in result
@@ -437,6 +439,137 @@ async def test_login_begin_response_has_no_device_code_secret() -> None:
     # And the device_code is also not exposed via the registry's
     # public_view — drain the task and re-verify.
     await _await_task("default")
+
+
+# ---------------------------------------------------------------------
+# account_type routing (#49)
+# ---------------------------------------------------------------------
+
+
+async def test_login_begin_missing_account_type_raises_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cold start: no account_type, no OUTLOOK_TENANT_ID env — must
+    raise LoginAccountTypeRequiredError with an agent-readable message.
+    No device-code HTTP call should happen — the validation is upfront."""
+    from outlook_mcp.auth import LoginAccountTypeRequiredError
+
+    monkeypatch.delenv("OUTLOOK_TENANT_ID", raising=False)
+    with pytest.raises(LoginAccountTypeRequiredError):
+        await login_begin(profile="default")
+
+
+async def test_login_begin_invalid_account_type_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Typo: account_type='privat' (German) → ValueError (strict).
+    Never silently fall back to a wrong endpoint."""
+    monkeypatch.delenv("OUTLOOK_TENANT_ID", raising=False)
+    with pytest.raises(ValueError, match="account_type"):
+        await login_begin(profile="default", account_type="privat")
+
+
+@respx.mock
+async def test_login_begin_personal_routes_to_consumers() -> None:
+    """account_type='personal' must hit /consumers (not /common or
+    /organizations). This is the v0.7 fix: /consumers is the only
+    authority whose Device Code landing page accepts personal MSAs."""
+    devcode_route = respx.post(DEVICE_CODE_URL_CONSUMERS).respond(
+        json={
+            "device_code": "DC-secret-xyz",
+            "user_code": "PERS-CODE",
+            "verification_uri": "https://www.microsoft.com/link",
+            "expires_in": 900,
+            "interval": 1,
+            "message": "",
+        }
+    )
+    respx.post(TOKEN_URL_CONSUMERS).respond(200, json=_success_token_json())
+    respx.get(ME_URL).respond(json={"userPrincipalName": "user@outlook.com"})
+
+    result = await login_begin(profile="default", account_type="personal")
+    assert result["user_code"] == "PERS-CODE"
+    assert result["verification_url"] == "https://www.microsoft.com/link"
+    assert devcode_route.called
+
+    session = await _await_task("default")
+    assert session.status == "success"
+
+
+@respx.mock
+async def test_login_begin_work_routes_to_organizations() -> None:
+    """account_type='work_or_school' must hit /organizations, NOT /common.
+    /common returns the work/school landing page (login.microsoft.com/device)
+    even for personal-capable apps — we pin to /organizations explicitly."""
+    devcode_route = respx.post(DEVICE_CODE_URL).respond(
+        json={
+            "device_code": "DC-secret-xyz",
+            "user_code": "WORK-CODE",
+            "verification_uri": "https://login.microsoft.com/device",
+            "expires_in": 900,
+            "interval": 1,
+            "message": "",
+        }
+    )
+    respx.post(TOKEN_URL).respond(200, json=_success_token_json())
+    respx.get(ME_URL).respond(json={"userPrincipalName": "user@xmv.de"})
+
+    result = await login_begin(profile="default", account_type="work_or_school")
+    assert result["user_code"] == "WORK-CODE"
+    assert result["verification_url"] == "https://login.microsoft.com/device"
+    assert devcode_route.called
+
+
+@respx.mock
+async def test_login_begin_env_override_satisfies_requirement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Legacy escape hatch: OUTLOOK_TENANT_ID=consumers satisfies the
+    requirement with no account_type kwarg. Existing CI / power-user
+    setups must keep working."""
+    monkeypatch.setenv("OUTLOOK_TENANT_ID", "consumers")
+    respx.post(DEVICE_CODE_URL_CONSUMERS).respond(
+        json={
+            "device_code": "DC",
+            "user_code": "ENV-CODE",
+            "verification_uri": "https://www.microsoft.com/link",
+            "expires_in": 900,
+            "interval": 1,
+            "message": "",
+        }
+    )
+    respx.post(TOKEN_URL_CONSUMERS).respond(200, json=_success_token_json())
+    respx.get(ME_URL).respond(json={"userPrincipalName": "user@outlook.com"})
+
+    result = await login_begin(profile="default")
+    assert result["user_code"] == "ENV-CODE"
+
+
+@respx.mock
+async def test_login_begin_account_type_param_wins_over_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If both are set, account_type wins. Surprising-but-correct: an
+    agent that has elicited account_type from the user shouldn't be
+    overridden by a forgotten env var in the shell."""
+    monkeypatch.setenv("OUTLOOK_TENANT_ID", "organizations")  # would hit /organizations
+    # account_type="personal" overrides — should hit /consumers instead.
+    devcode_route_consumers = respx.post(DEVICE_CODE_URL_CONSUMERS).respond(
+        json={
+            "device_code": "DC",
+            "user_code": "PARAM-WINS",
+            "verification_uri": "https://www.microsoft.com/link",
+            "expires_in": 900,
+            "interval": 1,
+            "message": "",
+        }
+    )
+    respx.post(TOKEN_URL_CONSUMERS).respond(200, json=_success_token_json())
+    respx.get(ME_URL).respond(json={"userPrincipalName": "user@outlook.com"})
+
+    result = await login_begin(profile="default", account_type="personal")
+    assert result["user_code"] == "PARAM-WINS"
+    assert devcode_route_consumers.called
 
 
 # ---------------------------------------------------------------------

@@ -52,6 +52,21 @@ def _build_parser() -> argparse.ArgumentParser:
         default="default",
         help="Profile name (namespace for token cache). Default: 'default'.",
     )
+    login_p.add_argument(
+        "--account-type",
+        choices=("personal", "work_or_school"),
+        default=None,
+        help=(
+            "Which kind of Microsoft account to sign in with. "
+            "'personal' for outlook.com / hotmail.com / live.com / msn.com "
+            "(routes to Microsoft Identity /consumers, landing page "
+            "https://www.microsoft.com/link). "
+            "'work_or_school' for any Microsoft 365 tenant account incl. "
+            "B2B guests (routes to /organizations, landing page "
+            "https://login.microsoft.com/device). REQUIRED unless "
+            "OUTLOOK_TENANT_ID is set as an explicit power-user override."
+        ),
+    )
 
     logout_p = subparsers.add_parser(
         "logout",
@@ -96,9 +111,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
 
     if args.command == "login":
-        from outlook_mcp.auth import interactive_login
+        from outlook_mcp.auth import LoginAccountTypeRequiredError, interactive_login
 
-        interactive_login(profile=args.profile)
+        try:
+            interactive_login(
+                profile=args.profile,
+                account_type=args.account_type,
+            )
+        except LoginAccountTypeRequiredError as err:
+            sys.stderr.write(str(err) + "\n")
+            return 2
         return 0
 
     if args.command == "logout":

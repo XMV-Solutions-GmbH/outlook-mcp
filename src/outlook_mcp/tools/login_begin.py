@@ -44,10 +44,11 @@ from mcp_microsoft_graph_auth import LoginSession, public_view
 from outlook_mcp.auth import (
     AuthorizationDeniedError,
     DeviceCodeExpiredError,
+    LoginAccountTypeRequiredError,
 )
 from outlook_mcp.auth.flow import (
-    DEFAULT_AUTHORITY_TENANT,
     DEFAULT_CLIENT_ID,
+    account_type_to_tenant,
     poll_for_token,
     request_device_code,
 )
@@ -63,12 +64,20 @@ _log = logging.getLogger("outlook-mcp.login_begin")
 
 async def login_begin(
     *,
+    account_type: str | None = None,
     profile: str = "default",
     force: bool = False,
     ctx: Context[Any, Any] | None = None,
     http: httpx.Client | None = None,
 ) -> dict[str, Any]:
     """Drive the Device Code flow. **Returns immediately, non-blocking.**
+
+    `account_type` (#49) MUST be `"personal"` or `"work_or_school"` to
+    route the device-code request to the right Microsoft Identity
+    authority. If missing, raises `LoginAccountTypeRequiredError` with
+    an agent-readable instruction to ask the user. The legacy
+    `OUTLOOK_TENANT_ID` env var, if set, satisfies the requirement
+    (power-user escape hatch).
 
     Returns the public-view dict of the resulting `LoginSession` with
     `status="pending"` while polling continues in the background.
@@ -94,6 +103,7 @@ async def login_begin(
     progress-during-blocking-tool-call would entail.
     """
     del ctx  # currently unused — see docstring
+    resolved_tenant = _resolve_login_tenant_for_mcp_tool(account_type)
     registry = get_login_session_registry()
     existing = registry.get(profile)
 
@@ -110,7 +120,7 @@ async def login_begin(
     device_code, challenge = await asyncio.to_thread(
         request_device_code,
         client_id=DEFAULT_CLIENT_ID,
-        tenant=DEFAULT_AUTHORITY_TENANT,
+        tenant=resolved_tenant,
         http=http,
     )
     started_at = datetime.now(UTC)
@@ -136,8 +146,27 @@ async def login_begin(
     if final is not session:
         return public_view(final, now=datetime.now(UTC))
 
-    final.task = asyncio.create_task(_poll_and_finalize(final, http=http))
+    final.task = asyncio.create_task(_poll_and_finalize(final, tenant=resolved_tenant, http=http))
     return public_view(final, now=datetime.now(UTC))
+
+
+def _resolve_login_tenant_for_mcp_tool(account_type: str | None) -> str:
+    """Resolve the Microsoft Identity tenant path for the MCP tool path.
+
+    Same precedence as `outlook_mcp.auth._resolve_login_tenant` but
+    inlined here because the MCP tool doesn't take a `tenant=` kwarg
+    (would only confuse the agent — the choice between `personal` and
+    `work_or_school` covers the legitimate use cases). The
+    `OUTLOOK_TENANT_ID` env var stays as a power-user / CI override.
+    """
+    import os
+
+    if account_type:
+        return account_type_to_tenant(account_type)
+    env = os.environ.get("OUTLOOK_TENANT_ID", "").strip()
+    if env:
+        return env
+    raise LoginAccountTypeRequiredError
 
 
 def _cancel_session(session: LoginSession) -> None:
@@ -151,10 +180,15 @@ def _cancel_session(session: LoginSession) -> None:
 async def _poll_and_finalize(
     session: LoginSession,
     *,
+    tenant: str,
     http: httpx.Client | None,
 ) -> None:
     """Background task: poll Microsoft Identity until a terminal state,
     then write the token + populate the UPN cache.
+
+    `tenant` is the same authority path used for `request_device_code`
+    — the `/token` endpoint is per-authority so we have to keep them
+    consistent (#49).
 
     Mutates `session.status`, `session.error`, `session.signed_in_user_upn`
     in place. Persists the token via the configured TokenStore.
@@ -164,7 +198,7 @@ async def _poll_and_finalize(
             poll_for_token,
             device_code=session.device_code,
             client_id=DEFAULT_CLIENT_ID,
-            tenant=DEFAULT_AUTHORITY_TENANT,
+            tenant=tenant,
             interval=session.interval_s,
             http=http,
         )

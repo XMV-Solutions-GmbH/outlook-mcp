@@ -16,11 +16,16 @@ import pytest
 import respx
 
 from outlook_mcp.auth.flow import (
+    ACCOUNT_TYPE_PERSONAL,
+    ACCOUNT_TYPE_WORK_OR_SCHOOL,
     DEFAULT_AUTHORITY_TENANT,
+    VALID_ACCOUNT_TYPES,
     AuthorizationDeniedError,
     DeviceCodeError,
     DeviceCodeExpiredError,
+    LoginAccountTypeRequiredError,
     RefreshTokenInvalidError,
+    account_type_to_tenant,
     poll_for_token,
     refresh_access_token,
     request_device_code,
@@ -319,3 +324,75 @@ def _fake_clock(start: float, ticks: list[float]) -> Callable[[], float]:
             return start
 
     return now
+
+
+# ---------------------------------------------------------------------
+# account_type → tenant mapping (#49)
+# ---------------------------------------------------------------------
+
+
+def test_account_type_to_tenant_personal_maps_to_consumers() -> None:
+    """Personal MSAs route through Microsoft Identity's /consumers
+    authority — that's the only path that returns the personal
+    Device Code landing page (microsoft.com/link)."""
+    assert account_type_to_tenant(ACCOUNT_TYPE_PERSONAL) == "consumers"
+
+
+def test_account_type_to_tenant_work_maps_to_organizations() -> None:
+    """Work/school accounts route through /organizations, NOT /common.
+    /common returns the work/school landing page even for personal-
+    capable apps; we use /organizations for an explicit choice."""
+    assert account_type_to_tenant(ACCOUNT_TYPE_WORK_OR_SCHOOL) == "organizations"
+
+
+@pytest.mark.parametrize("bad", ["", "common", "consumers", "Personal", "WORK_OR_SCHOOL", "privat"])
+def test_account_type_to_tenant_rejects_unknown(bad: str) -> None:
+    """Strict per #49 — typos must raise loudly, never silently fall
+    through to a wrong endpoint."""
+    with pytest.raises(ValueError, match="account_type"):
+        account_type_to_tenant(bad)
+
+
+def test_valid_account_types_constant_matches_two_values() -> None:
+    """The literal tuple is the public contract that callers
+    (CLI choices, MCP-tool descriptions) hang their UI off."""
+    assert VALID_ACCOUNT_TYPES == ("personal", "work_or_school")
+    assert ACCOUNT_TYPE_PERSONAL == "personal"
+    assert ACCOUNT_TYPE_WORK_OR_SCHOOL == "work_or_school"
+
+
+# ---------------------------------------------------------------------
+# LoginAccountTypeRequiredError (#49)
+# ---------------------------------------------------------------------
+
+
+def test_login_account_type_required_error_default_message_includes_both_values() -> None:
+    """The default message is what the MCP-tool layer surfaces to the
+    agent. It MUST name both valid values verbatim — the agent uses
+    those strings to retry the tool call."""
+    err = LoginAccountTypeRequiredError()
+    msg = str(err)
+    assert "personal" in msg
+    assert "work_or_school" in msg
+
+
+def test_login_account_type_required_error_mentions_outlook_com() -> None:
+    """Help text should hint at concrete account-domain examples so
+    the user can recognise their account kind. Without this hint
+    users sometimes pick the wrong option."""
+    err = LoginAccountTypeRequiredError()
+    assert "outlook.com" in str(err)
+
+
+def test_login_account_type_required_error_has_agent_instructions_marker() -> None:
+    """Stable marker `AGENT_INSTRUCTIONS:` lets MCP clients pattern-
+    match the error and route it to the user-elicitation UI rather
+    than just rendering it as plain text."""
+    assert "AGENT_INSTRUCTIONS:" in str(LoginAccountTypeRequiredError())
+
+
+def test_login_account_type_required_error_accepts_custom_message() -> None:
+    """Callers can override with profile-specific text if they want;
+    default stays the safe one."""
+    custom = LoginAccountTypeRequiredError("custom override text")
+    assert str(custom) == "custom override text"
