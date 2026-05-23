@@ -349,8 +349,7 @@ def test_ol_email_delete_soft_on_shared_mailbox() -> None:
             # Cross-routing cross-check: seed must be in shared Drafts,
             # NOT in /me/Drafts.
             assert (
-                _find_in_folder(client, headers, "Drafts", draft_id, mailbox=shared)
-                is not None
+                _find_in_folder(client, headers, "Drafts", draft_id, mailbox=shared) is not None
             ), "seed draft should be in shared mailbox's Drafts"
             assert _find_in_folder(client, headers, "Drafts", draft_id) is None, (
                 "shared-mailbox seed must NOT appear in /me/Drafts — would prove "
@@ -369,10 +368,9 @@ def test_ol_email_delete_soft_on_shared_mailbox() -> None:
             }
 
             # Gone from shared mailbox's Drafts.
-            assert (
-                _find_in_folder(client, headers, "Drafts", draft_id, mailbox=shared)
-                is None
-            ), "soft delete on shared mailbox should remove from shared Drafts"
+            assert _find_in_folder(client, headers, "Drafts", draft_id, mailbox=shared) is None, (
+                "soft delete on shared mailbox should remove from shared Drafts"
+            )
         finally:
             try:
                 delete_message(
