@@ -136,3 +136,101 @@ def test_resolve_scopes_consent_unset_raises(monkeypatch: pytest.MonkeyPatch) ->
     _set_consent(monkeypatch, drafts=None, send=None)
     with pytest.raises(OutlookConsentNotConfiguredError):
         resolve_scopes()
+
+
+# ---------------------------------------------------------------------
+# OUTLOOK_ALLOW_SHARED_MAILBOXES scope handling — #45
+# ---------------------------------------------------------------------
+
+
+def _set_full_consent(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    drafts: str = "false",
+    send: str | None = None,
+    shared: str | None = None,
+    delete: str | None = None,
+) -> None:
+    """Wrapper that also flips the two v0.5 optional flags. Defaults
+    keep tests focused on a single flag at a time."""
+    _set_consent(monkeypatch, drafts=drafts, send=send)
+    for name, value in [
+        ("OUTLOOK_ALLOW_SHARED_MAILBOXES", shared),
+        ("OUTLOOK_ALLOW_DELETE", delete),
+    ]:
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+
+
+def test_resolve_scopes_shared_mailboxes_false_omits_shared_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default (flag unset) keeps the old scope set — no breakage for
+    existing installs."""
+    _set_full_consent(monkeypatch, drafts="false")
+    scopes = resolve_scopes()
+    assert "Mail.ReadWrite.Shared" not in scopes
+
+
+def test_resolve_scopes_shared_mailboxes_true_appends_shared_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SHARED_MAILBOXES=true: consent screen exposes shared-mailbox
+    read+write — the load-bearing property for #45."""
+    _set_full_consent(monkeypatch, drafts="false", shared="true")
+    scopes = resolve_scopes()
+    assert "Mail.ReadWrite.Shared" in scopes
+
+
+def test_resolve_scopes_shared_mailboxes_explicit_false_no_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit 'false' is the same as unset for scope purposes."""
+    _set_full_consent(monkeypatch, drafts="false", shared="false")
+    scopes = resolve_scopes()
+    assert "Mail.ReadWrite.Shared" not in scopes
+
+
+def test_resolve_scopes_shared_mailboxes_typo_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A typo (yes/1/on) raises — silent fall-through to safe-off would
+    confuse the operator who thinks they enabled shared access."""
+    _set_full_consent(monkeypatch, drafts="false", shared="yes")
+    with pytest.raises(OutlookConsentNotConfiguredError, match="OUTLOOK_ALLOW_SHARED_MAILBOXES"):
+        resolve_scopes()
+
+
+def test_resolve_scopes_all_four_flags_compose(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Full surface enabled: BASE + Mail.Send + Mail.ReadWrite.Shared."""
+    _set_full_consent(
+        monkeypatch,
+        drafts="true",
+        send="true",
+        shared="true",
+        delete="true",
+    )
+    scopes = resolve_scopes()
+    assert "Mail.Send" in scopes
+    assert "Mail.ReadWrite.Shared" in scopes
+
+
+def test_resolve_scopes_delete_alone_does_not_add_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OUTLOOK_ALLOW_DELETE doesn't require an extra OAuth scope — the
+    base Mail.ReadWrite already covers DELETE on /me/messages. The
+    flag only gates tool registration."""
+    _set_full_consent(monkeypatch, drafts="false", delete="true")
+    scopes = resolve_scopes()
+    # No new scope from delete-only.
+    assert "Mail.ReadWrite.Shared" not in scopes
+    assert "Mail.Send" not in scopes
+
+
+def test_resolve_scopes_delete_typo_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_full_consent(monkeypatch, drafts="false", delete="enabled")
+    with pytest.raises(OutlookConsentNotConfiguredError, match="OUTLOOK_ALLOW_DELETE"):
+        resolve_scopes()

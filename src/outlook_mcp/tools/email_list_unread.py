@@ -17,25 +17,33 @@ from typing import Any
 import httpx
 
 from outlook_mcp.auth import get_token
-from outlook_mcp.tools._common import GRAPH_BASE, auth_headers
+from outlook_mcp.tools._common import GRAPH_BASE, auth_headers, mailbox_path
 
 
 def list_unread(
     *,
     folder: str = "Inbox",
     limit: int = 50,
+    mailbox: str | None = None,
     profile: str = "default",
     http: httpx.Client | None = None,
 ) -> list[dict[str, Any]]:
     """List unread messages in `folder`, newest first.
 
+    `mailbox=None` (default): the signed-in user's mailbox (`/me/...`).
+    `mailbox="<upn>"`: a shared mailbox the signed-in user has
+    FullAccess on (`/users/{upn}/...`). The MCP-tool wrapper enforces
+    that `mailbox` is only usable when
+    `OUTLOOK_ALLOW_SHARED_MAILBOXES=true`.
+
     Returns at most `limit` entries with the same shape as
     `ol_email_search`. Empty list is valid (zero unread).
 
     Raises:
-        ValueError: non-positive limit / empty folder.
-        httpx.HTTPStatusError: 404 if `folder` doesn't exist; other
-            non-2xx as raised by Microsoft.
+        ValueError: non-positive limit, empty folder, or empty mailbox.
+        httpx.HTTPStatusError: 404 if `folder` doesn't exist; 403 if
+            `mailbox` is set but the signed-in user has no FullAccess
+            on it; other non-2xx as raised by Microsoft.
         outlook_mcp.auth.AuthRequiredError: no cached token.
     """
     if not folder or not folder.strip():
@@ -43,7 +51,8 @@ def list_unread(
     if limit <= 0:
         raise ValueError(f"limit must be positive, got {limit}")
 
-    url = f"{GRAPH_BASE}/me/mailFolders/{folder}/messages"
+    box = mailbox_path(mailbox)
+    url = f"{GRAPH_BASE}/{box}/mailFolders/{folder}/messages"
     params: dict[str, str | int] = {
         "$filter": "isRead eq false",
         "$orderby": "receivedDateTime desc",

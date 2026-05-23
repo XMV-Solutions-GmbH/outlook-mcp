@@ -4,9 +4,7 @@
 """Shared helpers across `ol_*` tool modules.
 
 Default Microsoft Graph base URL + utilities for building the auth
-header. Outlook is mailbox-scoped per user, so unlike the SharePoint
-sister project we don't need URL parsing or site-id resolution.
-Everything hits `/me/...` against the signed-in user.
+header and addressing the right mailbox.
 
 Every Graph request carries a `User-Agent: mcp-server-outlook/<version>`
 header in addition to the bearer token. The audit-trail rationale is
@@ -21,6 +19,8 @@ to the tools/ subpackage".
 """
 
 from __future__ import annotations
+
+from urllib.parse import quote
 
 from outlook_mcp import __version__
 
@@ -39,3 +39,37 @@ def auth_headers(token: str) -> dict[str, str]:
         "Authorization": f"Bearer {token}",
         "User-Agent": USER_AGENT,
     }
+
+
+def mailbox_path(mailbox: str | None) -> str:
+    """Return the Graph URL fragment that addresses the right mailbox.
+
+    `mailbox=None` (the default) → `"me"` — the signed-in user, exactly
+    the behaviour the server had pre-v0.5 and still has when
+    `OUTLOOK_ALLOW_SHARED_MAILBOXES=false` (or unset).
+
+    `mailbox="<upn>"` → `"users/{upn-url-quoted}"` — a delegated mailbox
+    that the signed-in user has FullAccess on via Exchange's
+    `Add-MailboxPermission`. Requires `Mail.ReadWrite.Shared` in the
+    OAuth scope (the server adds it automatically when SHARED_MAILBOXES
+    is enabled; see auth/flow.py:resolve_scopes).
+
+    The caller composes with f-strings, e.g.:
+
+        f"{GRAPH_BASE}/{mailbox_path(mailbox)}/messages"
+
+    URL-quotes the `@` and `.` in the UPN so a hostile mailbox value
+    can't smuggle path traversal into the Graph URL — Graph itself
+    accepts the decoded form, but we don't want surprise behaviour if
+    the value flows through other clients first.
+
+    Raises `ValueError` if `mailbox` is provided but empty/whitespace.
+    """
+    if mailbox is None:
+        return "me"
+    cleaned = mailbox.strip()
+    if not cleaned:
+        raise ValueError(
+            "mailbox must be a non-empty UPN (e.g. 'shared@contoso.com') or None",
+        )
+    return f"users/{quote(cleaned, safe='@.+-_')}"

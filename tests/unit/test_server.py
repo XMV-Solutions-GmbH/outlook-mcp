@@ -411,3 +411,169 @@ def test_module_level_server_drafts_true_send_false_omits_send_tool(
     names = _list_tool_names(server)
     assert "ol_email_create_draft" in names
     assert "ol_email_send_draft" not in names
+
+
+# ---------------------------------------------------------------------
+# #45: shared-mailbox + delete opt-ins
+# ---------------------------------------------------------------------
+
+
+def _set_full_consent(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    drafts: str = "false",
+    send: str | None = None,
+    shared: str | None = None,
+    delete: str | None = None,
+) -> None:
+    _set_consent(monkeypatch, drafts=drafts, send=send)
+    for name, value in [
+        ("OUTLOOK_ALLOW_SHARED_MAILBOXES", shared),
+        ("OUTLOOK_ALLOW_DELETE", delete),
+    ]:
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+
+
+# ── shared_mailboxes_enabled / delete_enabled accessors ──────────────────
+
+
+def test_shared_mailboxes_enabled_default_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset = False — preserves existing-install behaviour."""
+    from outlook_mcp.server import shared_mailboxes_enabled
+
+    _set_full_consent(monkeypatch, drafts="false")
+    assert shared_mailboxes_enabled() is False
+
+
+def test_shared_mailboxes_enabled_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    from outlook_mcp.server import shared_mailboxes_enabled
+
+    _set_full_consent(monkeypatch, drafts="false", shared="true")
+    assert shared_mailboxes_enabled() is True
+
+
+def test_shared_mailboxes_enabled_typo_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    from outlook_mcp.auth.flow import OutlookConsentNotConfiguredError
+    from outlook_mcp.server import shared_mailboxes_enabled
+
+    _set_full_consent(monkeypatch, drafts="false", shared="enabled")
+    with pytest.raises(OutlookConsentNotConfiguredError, match="OUTLOOK_ALLOW_SHARED_MAILBOXES"):
+        shared_mailboxes_enabled()
+
+
+def test_delete_enabled_default_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    from outlook_mcp.server import delete_enabled
+
+    _set_full_consent(monkeypatch, drafts="false")
+    assert delete_enabled() is False
+
+
+def test_delete_enabled_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    from outlook_mcp.server import delete_enabled
+
+    _set_full_consent(monkeypatch, drafts="false", delete="true")
+    assert delete_enabled() is True
+
+
+# ── _guard_mailbox enforcement ────────────────────────────────────────────
+
+
+def test_guard_mailbox_allows_none_when_shared_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default (mailbox=None) is always allowed — that's the unchanged
+    /me code path."""
+    from outlook_mcp.server import _guard_mailbox
+
+    _set_full_consent(monkeypatch, drafts="false")
+    _guard_mailbox(None)  # no exception
+
+
+def test_guard_mailbox_refuses_non_none_when_shared_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole point of the guard: tell the operator about the env-var
+    requirement before Graph returns a confusing 403."""
+    from outlook_mcp.server import _guard_mailbox
+
+    _set_full_consent(monkeypatch, drafts="false")
+    with pytest.raises(PermissionError, match="OUTLOOK_ALLOW_SHARED_MAILBOXES"):
+        _guard_mailbox("shared@xmv.de")
+
+
+def test_guard_mailbox_allows_non_none_when_shared_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from outlook_mcp.server import _guard_mailbox
+
+    _set_full_consent(monkeypatch, drafts="false", shared="true")
+    _guard_mailbox("shared@xmv.de")  # no exception
+
+
+# ── register_delete_tools / ol_email_delete registration ──────────────────
+
+
+def test_register_delete_tools_adds_ol_email_delete(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When OUTLOOK_ALLOW_DELETE=true the delete tool is registered."""
+    _set_full_consent(monkeypatch, drafts="false", delete="true")
+    from outlook_mcp.server import _build_server
+
+    server = _build_server()
+    names = _list_tool_names(server)
+    assert "ol_email_delete" in names
+
+
+def test_delete_tool_absent_when_delete_flag_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Existing-install behaviour: delete flag unset = no delete tool."""
+    _set_full_consent(monkeypatch, drafts="false")
+    from outlook_mcp.server import _build_server
+
+    server = _build_server()
+    names = _list_tool_names(server)
+    assert "ol_email_delete" not in names
+
+
+def test_delete_tool_absent_when_delete_explicitly_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_full_consent(monkeypatch, drafts="false", delete="false")
+    from outlook_mcp.server import _build_server
+
+    server = _build_server()
+    names = _list_tool_names(server)
+    assert "ol_email_delete" not in names
+
+
+def test_delete_tool_orthogonal_to_drafts_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DELETE flag is independent of DRAFTS/SEND. An operator might want
+    delete on the signed-in mailbox without enabling drafts."""
+    _set_full_consent(monkeypatch, drafts="false", delete="true")
+    from outlook_mcp.server import _build_server
+
+    server = _build_server()
+    names = _list_tool_names(server)
+    assert "ol_email_delete" in names
+    # Drafts/send not registered when DRAFTS=false.
+    assert "ol_email_create_draft" not in names
+    assert "ol_email_send_draft" not in names
+
+
+def test_delete_tool_annotations_are_destructive() -> None:
+    """ol_email_delete moves data — destructiveHint=True. Idempotent
+    because 404 is treated as success."""
+    from outlook_mcp.server import register_delete_tools
+
+    server = FastMCP("test-delete")
+    register_delete_tools(server)
+    [delete_tool] = [t for t in asyncio.run(server.list_tools()) if t.name == "ol_email_delete"]
+    assert delete_tool.annotations is not None
+    assert delete_tool.annotations.readOnlyHint is False
+    assert delete_tool.annotations.destructiveHint is True
+    assert delete_tool.annotations.idempotentHint is True

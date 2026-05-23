@@ -13,8 +13,10 @@ keys here makes a regression visible the moment someone replaces
 
 from __future__ import annotations
 
+import pytest
+
 from outlook_mcp import __version__
-from outlook_mcp.tools._common import GRAPH_BASE, USER_AGENT, auth_headers
+from outlook_mcp.tools._common import GRAPH_BASE, USER_AGENT, auth_headers, mailbox_path
 
 
 def test_graph_base_url_is_v1() -> None:
@@ -47,3 +49,51 @@ def test_auth_headers_only_authoritative_keys() -> None:
     shared helper."""
     headers = auth_headers("AT")
     assert set(headers.keys()) == {"Authorization", "User-Agent"}
+
+
+# ---------------------------------------------------------------------
+# mailbox_path — #45 shared-mailbox routing
+# ---------------------------------------------------------------------
+
+
+def test_mailbox_path_none_returns_me() -> None:
+    """The default path matches pre-#45 behaviour: signed-in user."""
+    assert mailbox_path(None) == "me"
+
+
+def test_mailbox_path_upn_returns_users_segment() -> None:
+    """`@` is in the safe set of the urllib.quote call — passes through
+    unquoted because Microsoft Graph accepts `/users/{upn}` URLs in
+    that form and unquoted reads better in audit logs."""
+    assert mailbox_path("sekretariat@xmv.de") == "users/sekretariat@xmv.de"
+
+
+def test_mailbox_path_preserves_dot_and_plus_in_upn() -> None:
+    """`.`, `+`, `-`, `_`, `@` are in the safe set — all pass through
+    unquoted for audit-log readability."""
+    assert mailbox_path("first.last+team@contoso.de") == ("users/first.last+team@contoso.de")
+
+
+def test_mailbox_path_strips_whitespace() -> None:
+    """A copy-pasted UPN with trailing whitespace shouldn't break routing."""
+    assert mailbox_path("  shared@xmv.de  ") == "users/shared@xmv.de"
+
+
+def test_mailbox_path_rejects_empty_string() -> None:
+    """An empty `mailbox` is operator error — fail loud."""
+    with pytest.raises(ValueError, match="non-empty UPN"):
+        mailbox_path("")
+
+
+def test_mailbox_path_rejects_whitespace_only() -> None:
+    with pytest.raises(ValueError, match="non-empty UPN"):
+        mailbox_path("   ")
+
+
+def test_mailbox_path_blocks_path_traversal_attempt() -> None:
+    """A mailbox value with a slash would compose to a different URL
+    shape; quoting catches it so the Graph URL stays scoped to /users/."""
+    quoted = mailbox_path("../admin@evil.de")
+    # The slash gets %-encoded; the URL still routes via /users/.
+    assert quoted.startswith("users/")
+    assert "/" not in quoted[len("users/") :]

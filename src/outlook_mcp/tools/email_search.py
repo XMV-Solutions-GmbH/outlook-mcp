@@ -23,7 +23,7 @@ from typing import Any
 import httpx
 
 from outlook_mcp.auth import get_token
-from outlook_mcp.tools._common import GRAPH_BASE, auth_headers
+from outlook_mcp.tools._common import GRAPH_BASE, auth_headers, mailbox_path
 
 
 def search(
@@ -34,10 +34,17 @@ def search(
     modified_after: str | None = None,
     has_attachment: bool | None = None,
     limit: int = 25,
+    mailbox: str | None = None,
     profile: str = "default",
     http: httpx.Client | None = None,
 ) -> list[dict[str, Any]]:
     """Search messages in the signed-in user's mailbox.
+
+    `mailbox=None` (default): the signed-in user's mailbox (`/me/...`).
+    `mailbox="<upn>"`: a shared mailbox the signed-in user has
+    FullAccess on (`/users/{upn}/...`). The MCP-tool wrapper enforces
+    that `mailbox` is only usable when
+    `OUTLOOK_ALLOW_SHARED_MAILBOXES=true`.
 
     Returns at most `limit` hits, each a dict with `id`, `subject`,
     `from` (display + email), `received_at` (ISO 8601), `snippet`
@@ -55,8 +62,9 @@ def search(
     - `has_attachment=True` — only mails with attachments.
 
     Raises:
-        ValueError: empty query / non-positive limit.
-        httpx.HTTPStatusError: on a non-2xx response from Graph.
+        ValueError: empty query, non-positive limit, or empty mailbox.
+        httpx.HTTPStatusError: 403 if `mailbox` is set but the signed-in
+            user has no FullAccess on it; other non-2xx propagate.
         outlook_mcp.auth.AuthRequiredError: no usable cached token
             for `profile`.
     """
@@ -65,8 +73,11 @@ def search(
     if limit <= 0:
         raise ValueError(f"limit must be positive, got {limit}")
 
+    box = mailbox_path(mailbox)
     base = (
-        f"{GRAPH_BASE}/me/mailFolders/{folder}/messages" if folder else f"{GRAPH_BASE}/me/messages"
+        f"{GRAPH_BASE}/{box}/mailFolders/{folder}/messages"
+        if folder
+        else f"{GRAPH_BASE}/{box}/messages"
     )
     params: dict[str, str | int] = {
         "$search": f'"{query.strip()}"',
