@@ -29,6 +29,7 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
+from outlook_mcp.auth import get_token, is_personal_account
 from outlook_mcp.auth.flow import (
     ALLOW_DRAFTS_ENV as _AUTH_FLOW_ALLOW_DRAFTS_ENV,
 )
@@ -101,24 +102,51 @@ def delete_enabled() -> bool:
     return validate_consent_config().delete
 
 
-def _guard_mailbox(mailbox: str | None) -> None:
-    """Refuse a non-None `mailbox` arg when shared mailboxes are disabled.
+def _guard_mailbox(mailbox: str | None, *, profile: str) -> None:
+    """Refuse a non-None `mailbox` arg when shared mailboxes can't work.
 
-    Centralised so each email-tool wrapper just calls this; the runtime
-    error message is consistent across tools. The MCP schema still
-    advertises the `mailbox` parameter on every tool — agents see it
-    and may try to use it. Without this guard the impl would route to
-    `/users/{upn}/...` and Microsoft Graph would 403 with a confusing
-    error; the explicit refusal here tells the operator that it's an
-    XMV-side opt-in flag rather than a Microsoft permission issue.
+    Two distinct reasons the `mailbox` parameter can be rejected:
+
+    1. **XMV policy**: `OUTLOOK_ALLOW_SHARED_MAILBOXES` is not enabled
+       in the operator's `.mcp.json`. This is a config decision — the
+       operator can flip the flag if they want shared-mailbox access.
+
+    2. **Microsoft platform restriction**: the signed-in account is a
+       personal Microsoft account (outlook.com / hotmail.com / live.com).
+       Personal MSAs have no FullAccess-Delegate semantic — Exchange's
+       `Add-MailboxPermission` is an Exchange-Online-only construct, not
+       a Microsoft-Identity-platform one. Even if the operator opted
+       into shared mailboxes, Microsoft would 403 every `/users/{upn}/`
+       call from a consumer token. We refuse client-side with a clearer
+       message that names the actual constraint.
+
+    Checked in that order so the operator's own config decision (case 1)
+    wins regardless of account type, and the platform-restriction
+    message (case 2) only surfaces when XMV policy already permits the
+    operation. Each tool wrapper calls this; the MCP schema still
+    advertises the `mailbox` parameter, the guard runs at call-time.
     """
-    if mailbox is not None and not shared_mailboxes_enabled():
+    if mailbox is None:
+        return
+
+    if not shared_mailboxes_enabled():
         raise PermissionError(
             "The `mailbox` parameter is only available when "
             "OUTLOOK_ALLOW_SHARED_MAILBOXES=true. Set the flag in your "
             ".mcp.json env block (and re-sign-in to grant "
             "Mail.ReadWrite.Shared on the consent screen) to enable "
             "shared-mailbox access.",
+        )
+
+    access_token = get_token(profile=profile)
+    if is_personal_account(access_token):
+        raise PermissionError(
+            "The `mailbox` parameter targets another mailbox via Exchange "
+            "Online's FullAccess-Delegate mechanism, which only exists for "
+            "Microsoft 365 work or school accounts. The signed-in account "
+            "is a personal Microsoft account (outlook.com / hotmail.com / "
+            "live.com) and has no shared-mailbox concept. Sign in with a "
+            "work or school account if you need to use this feature."
         )
 
 
@@ -155,7 +183,7 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
         limit: int = 25,
         mailbox: str | None = None,
     ) -> list[dict[str, Any]]:
-        _guard_mailbox(mailbox)
+        _guard_mailbox(mailbox, profile=_get_profile())
         return _do_email_search(
             query,
             folder=folder,
@@ -190,7 +218,7 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
         limit: int = 50,
         mailbox: str | None = None,
     ) -> list[dict[str, Any]]:
-        _guard_mailbox(mailbox)
+        _guard_mailbox(mailbox, profile=_get_profile())
         return _do_email_list_unread(
             folder=folder,
             limit=limit,
@@ -223,7 +251,7 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
         include_attachments: bool = False,
         mailbox: str | None = None,
     ) -> dict[str, Any]:
-        _guard_mailbox(mailbox)
+        _guard_mailbox(mailbox, profile=_get_profile())
         return _do_email_read(
             message_id,
             include_attachments=include_attachments,
@@ -713,7 +741,7 @@ def register_delete_tools(mcp_instance: FastMCP) -> None:
         mailbox: str | None = None,
         permanent: bool = False,
     ) -> dict[str, Any]:
-        _guard_mailbox(mailbox)
+        _guard_mailbox(mailbox, profile=_get_profile())
         return _do_email_delete(
             message_id,
             mailbox=mailbox,

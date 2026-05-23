@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Personal Microsoft accounts supported** (outlook.com / hotmail.com / live.com / msn.com). The XMV-hosted Entra app's `signInAudience` was widened from `AzureADMultipleOrgs` to `AzureADandPersonalMicrosoftAccount`, and the default OAuth authority from `/organizations` to `/common`. Multi-tenant B2B (XMV + customer tenants) is unaffected — `/common` is a superset.
+- **`outlook_mcp.auth.is_personal_account(token)`** — JWT-claims-based detector. Returns `True` iff the token's `tid` matches the global consumer tenant GUID. Used by tool guards to refuse Microsoft-platform-restricted features on consumer identities with clear messages rather than confusing 403s.
+- **`outlook_mcp.auth.signed_in_account_type(token)`** → returns `"personal"` or `"work_or_school"`. Stable label for structured logs and error messages.
+- **Harness profile `harness-personal`** — separate token cache + matching `OUTLOOK_HARNESS_PERSONAL_TOKEN_JSON` repo secret. `scripts/renew-harness-token.sh` accepts an optional profile arg (`harness` or `harness-personal`) to drive whichever flow is being refreshed. Personal-account harness tests skip silently if the token cache is absent.
+
+### Changed
+
+- `_guard_mailbox()` extended: when `OUTLOOK_ALLOW_SHARED_MAILBOXES=true` AND the signed-in account is a personal MSA, the `mailbox` parameter is now refused with a Microsoft-platform-restriction error message (FullAccess-Delegate via Exchange's `Add-MailboxPermission` only exists for work/school accounts). Operator policy still takes precedence — when the flag is `false`, that's still the error message.
+
 Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
 
 ## [v0.6.0] — 2026-05-23

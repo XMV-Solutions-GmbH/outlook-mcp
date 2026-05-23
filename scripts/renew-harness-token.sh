@@ -5,15 +5,26 @@
 #
 # One-shot harness token renewal for mcp-server-outlook CI.
 #
-# Run this once a month (whenever Microsoft's refresh-token TTL
-# is about to expire and CI starts hitting "refresh token rejected"
+# Two profiles, picked via the optional first argument:
+#
+#   ./scripts/renew-harness-token.sh                  → harness (work/school, default)
+#   ./scripts/renew-harness-token.sh harness          → same as above
+#   ./scripts/renew-harness-token.sh harness-personal → personal Microsoft account
+#
+# Run this once a month per profile (whenever Microsoft's refresh-token
+# TTL is about to expire and CI starts hitting "refresh token rejected"
 # in the harness job). Workflow:
 #
 #   1. Open a browser to the Microsoft Device Code URL.
-#   2. You sign in as the harness test user.
-#   3. Token is cached locally at ~/.cache/outlook-mcp/harness/token.json
-#   4. Same token is base64-encoded and uploaded to the GitHub repo
-#      as the secret OUTLOOK_HARNESS_TOKEN_JSON, where CI picks it up.
+#   2. You sign in as the chosen test user.
+#   3. Token is cached locally at ~/.cache/outlook-mcp/{profile}/token.json
+#   4. Same token is base64-encoded and uploaded to the GitHub repo as
+#      the matching secret, where CI picks it up.
+#
+# Profile → secret mapping:
+#
+#   harness          → OUTLOOK_HARNESS_TOKEN_JSON
+#   harness-personal → OUTLOOK_HARNESS_PERSONAL_TOKEN_JSON
 #
 # That's it — no other manual steps. CI is guided through the whole
 # renewal via this single command.
@@ -26,8 +37,20 @@
 set -euo pipefail
 
 REPO="XMV-Solutions-GmbH/outlook-mcp"
-PROFILE="harness"
-SECRET_NAME="OUTLOOK_HARNESS_TOKEN_JSON"
+PROFILE="${1:-harness}"
+case "${PROFILE}" in
+  harness)
+    SECRET_NAME="OUTLOOK_HARNESS_TOKEN_JSON"
+    ;;
+  harness-personal)
+    SECRET_NAME="OUTLOOK_HARNESS_PERSONAL_TOKEN_JSON"
+    ;;
+  *)
+    printf '\033[0;31mERROR: unknown profile %q.\033[0m\n' "${PROFILE}" >&2
+    printf 'Valid profiles: harness, harness-personal\n' >&2
+    exit 2
+    ;;
+esac
 TOKEN_PATH="${HOME}/.cache/outlook-mcp/${PROFILE}/token.json"
 
 red()   { printf '\033[0;31m%s\033[0m\n' "$*"; }

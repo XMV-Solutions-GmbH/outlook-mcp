@@ -35,6 +35,11 @@ from collections.abc import Callable
 
 import httpx
 
+from outlook_mcp.auth.account_type import (
+    CONSUMER_TENANT_ID,
+    is_personal_account,
+    signed_in_account_type,
+)
 from outlook_mcp.auth.flow import (
     DEFAULT_AUTHORITY_TENANT,
     DEFAULT_CLIENT_ID,
@@ -60,6 +65,7 @@ CLIENT_ID_ENV = "OUTLOOK_CLIENT_ID"
 TENANT_ENV = "OUTLOOK_TENANT_ID"
 
 __all__ = [
+    "CONSUMER_TENANT_ID",
     "AuthRequiredError",
     "AuthorizationDeniedError",
     "CachedToken",
@@ -70,7 +76,9 @@ __all__ = [
     "ServicePrincipalConfigError",
     "get_token",
     "interactive_login",
+    "is_personal_account",
     "is_service_principal_mode",
+    "signed_in_account_type",
 ]
 
 
