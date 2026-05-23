@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
+
+## [v0.7.0] — 2026-05-23
+
 ### Added
 
 - **`account_type` parameter on the login surface** (CLI `--account-type` and MCP tool `ol_login_begin`) with two values: `"personal"` (outlook.com / hotmail.com / live.com / msn.com) and `"work_or_school"` (M365 tenant accounts incl. B2B guests). The MCP tool description and the `LoginAccountTypeRequiredError` message both carry an `AGENT_INSTRUCTIONS:` marker so MCP clients can pattern-match the elicit-the-user UX. Closes [#49](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues/49).
@@ -27,8 +31,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 
 - `OUTLOOK_TENANT_ID` env var remains supported as a power-user / CI escape hatch but is no longer the recommended way to pick the Device Code authority. Use `--account-type` (CLI) or the `account_type` MCP-tool parameter instead.
-
-Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
 
 ## [v0.6.0] — 2026-05-23
 
