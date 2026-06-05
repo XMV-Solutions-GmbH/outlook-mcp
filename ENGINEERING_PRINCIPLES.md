@@ -1,5 +1,5 @@
 <!--
-SPDX-License-Identifier: MIT OR Apache-2.0
+SPDX-License-Identifier: LicenseRef-XMV-Proprietary
 SPDX-FileCopyrightText: 2026 XMV Solutions GmbH
 SPDX-FileContributor: David Koller <david.koller@xmv.de>
 -->
@@ -45,13 +45,13 @@ The point of the issues log: **future-you searches past pain**. If the same root
 
 ### Tooling
 
-**Default for XMV OSS projects: GitHub Issues + a repo-bound GitHub Project.** Both planned work and resolved-issue records live there from day one. The repo's GitHub Project is the canonical board; issues are the canonical units of work.
+**Default for XMV projects: GitHub Issues + a repo-bound GitHub Project.** Both planned work and resolved-issue records live there from day one. The repo's GitHub Project is the canonical board; issues are the canonical units of work.
 
 This is a deliberate update over the older "markdown TODO/ISSUES files in `docs/`" pattern that early XMV projects used. We learned that the markdown files drift, get forgotten, and lack the search / linking / assignment / labels / cross-repo references that make a backlog actually useful. GitHub gives those for free, and the repo-bound Project keeps the board scoped tightly to the repo it serves.
 
 | Situation | Use |
 |---|---|
-| New XMV OSS project | **GitHub Issues + a repo-bound GitHub Project from day one.** No markdown TODO/ISSUES files. |
+| New XMV project | **GitHub Issues + a repo-bound GitHub Project from day one.** No markdown TODO/ISSUES files. |
 | Existing XMV project still on markdown tracking | Migrate to GitHub Issues; keep the markdown file as a frozen historical artefact (read-only), do not extend it. |
 | External tracker (Linear / Jira) is mandated by the customer | Use it instead of GitHub Issues. The principle is "one canonical tracker per project", not "GitHub specifically". |
 | Pre-bootstrap moment, before the repo even exists | Capture decisions in chat or a scratch note, but file the issues immediately once the repo is up. |
@@ -174,6 +174,10 @@ The push-without-local-test pattern is sometimes rationalised as "CI is fast eno
 
 Special note for AI agents: the temptation to push-and-watch is high because watching feels like progress; it is not. Each iteration that goes through CI when it could have gone through a local test run costs the maintainer an order of magnitude more attention and time.
 
+**Harness layer too — not just unit/integration.** "Locally" includes the harness layer (per § 5 "Required from day one"), not only the fast layers. A harness suite that is only ever run by CI is a harness suite that fails on environment-specific issues the agent could have caught in 60 seconds. Lint, type-check, full test ladder, harness: all locally, before the push.
+
+**Fix all errors locally before the next push.** When local testing surfaces several failures, fix them all and run the suite once more locally to confirm green; do *not* push after the first fix, watch CI fail on the second, push again, watch CI fail on the third. That iteration is the most expensive shape of the same mistake: it converts a single local round into N CI rounds at N× the wall-clock and N× the metered cost.
+
 ### Required in every App Concept
 
 Every project's App Concept (or equivalent product/architecture document) must include a **Testability** section that names all three layers explicitly:
@@ -256,6 +260,21 @@ Operationally:
 
 This is the discipline that keeps trunk deployable per § 13. Without it, "PR is always in a deployable state" degrades to "PR is in a deployable state until something quietly broke and nobody noticed."
 
+### PR-batching for thematic ticket-series
+
+When a single planned outcome spans multiple tickets touching the same surface — a refactor series, a migration, an audit-driven fix run — default to one *bundle* PR that closes the whole series, not one PR per ticket.
+
+**The footgun this defuses.** When CI runs on every push, the natural response from both human contributors and AI agents is "CI is testing this anyway, I'll skip the local run." That hollows out the local-test discipline § 5 spends real effort defending. Trial-and-error against CI is an order of magnitude slower than against `make test` — and on metered runners (§ 5, point 2) it is also expensive. Bundle PRs pull the equilibrium back: one CI gate at the end of the series, not N.
+
+**How to apply.**
+
+- Open a long-lived feature branch off trunk; each ticket merges into it as a regular commit (or a stacked PR if reviewers need per-ticket sign-off).
+- Run the full local test suite before each push to the feature branch — § 5 applies *inside* the branch, not only at the final merge into trunk.
+- Each commit references the ticket it closes (`closes #123`) so the audit trail survives the squash.
+- Only the final merge of the feature branch into trunk is the "must be CI-green" gate.
+
+**When 1-ticket-1-PR is right.** Independent fixes against unrelated surfaces, or when a reviewer genuinely needs a smaller diff for a sensitive change. The default is *bundle*; the override is *per-ticket with reason*.
+
 ---
 
 ## 7. Documentation baseline
@@ -270,16 +289,16 @@ Every project must have, at repo root or under `docs/`:
 | Secret management (e.g. `docs/secrets.md`) | How secrets are generated, stored, propagated, rotated. |
 | `AGENTS.md` (or equivalent) | Project-specific conventions, tech stack, and AI-agent behaviour for this repo. Referenced by tool-specific files (`CLAUDE.md`, `.github/copilot-instructions.md`) which are pointers back here. |
 
-The backlog and the resolved-issue log live in **GitHub Issues + the repo-bound GitHub Project** (see § 2), not in markdown files. Older XMV repos may still carry a frozen `docs/todo.md`; do not extend it.
+The backlog and the resolved-issue log live in **GitHub Issues + the repo-bound GitHub Project** (see § 2), not in markdown files.
 
 Docs are kept in sync with reality. **Stale docs are a bug** — fix as part of the change that makes them stale.
 
 ### README structure
 
-A `README.md` is the first thing a new reader (human or agent) sees. The skeleton that pays back across XMV OSS projects:
+A `README.md` is the first thing a new reader (human or agent) sees. The skeleton that pays back across XMV projects:
 
-1. **Title + badges** (licence, build, coverage, package version, contributions welcome).
-2. **One-sentence pitch as a blockquote**, immediately under the badges. Under 200 characters. This shows up unrendered on package registries and in search results, so it has to stand alone.
+1. **Title + badges** (licence, build status, coverage where applicable).
+2. **One-sentence pitch as a blockquote**, immediately under the badges. Under 200 characters. This shows up unrendered in search results, so it has to stand alone.
 3. **"What is this for?"** — two or three paragraphs of the user's actual situation: what they have, what they want to do, why the obvious alternatives don't quite fit. Concrete and specific (named artefacts, named constraints) before any feature list. End with one sentence on how this project solves it differently.
 4. **Features** — what each feature does for the user, not how it's implemented.
 5. **Installation** — copy-pasteable, common path first.
@@ -287,7 +306,7 @@ A `README.md` is the first thing a new reader (human or agent) sees. The skeleto
 7. **Usage** — detailed, one sub-section per major surface.
 8. **Documentation** — link out to the deeper docs.
 9. **Contributing** — link to `CONTRIBUTING.md`.
-10. **Licence** — name the licence(s); link the files.
+10. **Licence** — name the licence; link the file.
 
 ---
 
@@ -329,43 +348,38 @@ A new agent should be able to read `AGENTS.md` + this file + recent commits + th
 
 ## 11. Licensing & attribution
 
-Every project has:
+Every XMV proprietary project has:
 
-- A `LICENSE` file at the repo root (and, for dual-licensed projects, `LICENSE-MIT` / `LICENSE-APACHE` alongside it). The specific licence is project-specific and named in `AGENTS.md`.
-- A `README.md` "License" section that names the license and links to the file. A shields.io-style badge is encouraged for visibility.
-- File-level attribution per **SPDX** (the open-source standard), so each source file declares its license and contributors machine-readably.
+- A `LICENSE` file at the repo root containing the XMV Proprietary Licence (version as agreed for the project). The specific version and any amendments are noted in `AGENTS.md`.
+- A `README.md` "Licence" section that names the licence and links to the file.
+- File-level attribution per **SPDX** so each source file declares its licence and contributors machine-readably.
 
 ### Per-file SPDX header
 
 Every source file authored in the project carries an **SPDX-style header** at the very top (after a shebang line if any):
 
 ```text
-SPDX-License-Identifier: <project license id>
-SPDX-FileCopyrightText: <year> <copyright holder>
+SPDX-License-Identifier: LicenseRef-XMV-Proprietary
+SPDX-FileCopyrightText: <year> XMV Solutions GmbH
 SPDX-FileContributor: <name> <<email>>
 ```
 
-- The licence identifier and copyright holder are project-specific (set in `AGENTS.md`).
+- The SPDX identifier `LicenseRef-XMV-Proprietary` is used because this licence is not an SPDX standard licence — the `LicenseRef-` prefix is the SPDX-compliant way to reference a custom licence.
 - The first `SPDX-FileContributor` line is set when the file is **created** and is **never overwritten**. This honours the German *Urheberrecht* (moral right of authorship), which is inalienable.
 - Subsequent substantial contributors **append** additional `SPDX-FileContributor` lines; they do not replace the original.
 - The agent populates the contributor line from the current `git config user.name` / `user.email`.
 
 ### Files exempt from headers
 
-- `LICENSE`, `LICENSE-MIT`, `LICENSE-APACHE` — these IS the license.
+- `LICENSE` — this IS the licence.
 - Auto-generated files (lock files, build artefacts, vendored binaries).
-- Third-party code (already carries upstream license).
+- Third-party code (already carries upstream licence; do not replace with XMV SPDX).
 
 All other files we author — including documentation (Markdown) — get a header. For Markdown the header is an HTML comment block at the very top of the file, before any content.
 
-### Open-source conventions to borrow
+### Third-party dependencies
 
-- README badges (license, build, coverage) where they convey real value.
-- Linking `LICENSE` from `README.md`.
-- A `SECURITY.md` once the project has external users.
-- `CONTRIBUTING.md` if outside contributors are expected.
-
-Borrow conventions that genuinely help readers; don't cargo-cult them.
+When the project uses open-source dependencies (packages, libraries), their licences are not affected by this file. Ensure all dependencies have compatible licences for the intended distribution model. For customer-deliverable projects, verify that included open-source licences permit the delivery scope (e.g. LGPL in a SaaS delivery vs. on-premises install). Maintain a `docs/third-party-licences.md` for any project that is delivered to external parties.
 
 ---
 
@@ -391,8 +405,7 @@ A new project starts as **single developer, direct-to-`main`**. There is no valu
 Switch to **feature branches + Pull Requests** when **any** of these becomes true:
 
 - A second developer (human or agent) joins the project.
-- The project has external users (a published release, public package, deployed service) — i.e. an unreviewed bad commit has user impact.
-- External contributions are accepted (issue tracker open to the public, contributor guidelines published).
+- The project has external users (a published release, deployed service, customer deliverable) — i.e. an unreviewed bad commit has user impact.
 
 From the moment PRs are introduced, the following rules apply.
 
@@ -402,7 +415,7 @@ Every PR opened for review represents work that **could merge as-is**:
 
 - **CI is green on the PR's head commit at merge time.** Not "was green earlier and probably still is", not "would be green if the flake settled" — actively green when the merge button is clicked. Branch protection should require this; if it doesn't, the PR author manually verifies it.
 - All tests pass — unit, integration, harness (the three layers from § 5).
-- Documentation is updated alongside the change (App Concept, Architecture, Secrets, README, TODO, ISSUES). No new `(TBD)` markers without a corresponding follow-up TODO.
+- Documentation is updated alongside the change (App Concept, Architecture, Secrets, README, CHANGELOG). No new `(TBD)` markers without a corresponding follow-up issue.
 - New behaviour either has tests, or the PR explicitly notes why not.
 - No half-finished work, no commented-out blocks, no dead branches.
 - Test automation has been **extended** for any new behaviour — adding a feature without extending the harness counts as half-finished.
@@ -418,8 +431,6 @@ Strictly two different things:
 - **Pull request discipline** (above) — a clean unit of work. Always applies once we use PRs, even with one developer.
 - **Four-eyes review** — a second human reads and approves before merge. Introduce this when team size justifies it; until then, the PR author may merge their own PR.
 
-The PR discipline alone gives clean history and reproducible state, even without a second pair of eyes.
-
 ### Branch protection grows with the team
 
 Branch protection rules (require status checks, require review, prevent force-push to `main`) get configured **as the team grows into them**. Don't pre-emptively lock down a one-developer repo — it just slows down the only person working.
@@ -428,8 +439,14 @@ A reasonable progression:
 
 1. Single dev, direct commits — no protection.
 2. Single dev, PR-only (self-merge) — `main` requires PR + linear history.
-3. Multi-dev or external users — add required status checks (CI green) + required review.
-4. Production-critical — add CODEOWNERS + required review from owners.
+3. Multi-dev — add required status checks (CI green) + required review.
+4. Customer-facing — add CODEOWNERS + required review from owners.
+
+### Multi-contributor coordination is a separate concern
+
+When a project has more than one contributor working in parallel — human developers, AI agents, or a mix — the *coordination* of those parallel streams (how work is broken down, who picks up what, how branches converge back to trunk without merge-hell, how stakeholder escalations are routed) is described in **`PROJECT_MANAGEMENT_PRINCIPLES.md`**, not here. Engineering Principles cover how a unit of work is done well; Project Management Principles cover how multiple units of work are coordinated to a clean trunk.
+
+The PR-discipline rules above (deployable state at merge time, CI green, docs updated) still apply to every branch at the moment it's merged — `PROJECT_MANAGEMENT_PRINCIPLES.md` adds the rule that *who* merges and *in what order* is the orchestrator's call, not the individual contributor's.
 
 ---
 
