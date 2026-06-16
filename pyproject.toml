@@ -45,6 +45,7 @@ dependencies = [
     # blocks raw HTML and dangerous URI schemes by default. See
     # docs/spikes/2026-05-08-v02-drafts-spikes.md § 4.
     "mistune>=3",
+    "pyjwt[crypto]>=2.13.0",
 ]
 
 [project.urls]
