@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
 
+## [v0.8.0] — 2026-08-03
+
 ### Added
 
 - **`ol_email_get_attachment(message_id, attachment_id, save_dir=None, filename=None, overwrite=False, mailbox=None)`** — read tool that downloads a single **file** attachment of a mail via Microsoft Graph and writes it to a local file. Returns `{path, name, content_type, size, graph_size, attachment_id, message_id, mailbox, is_inline}`, where `size` is the number of bytes written (the decoded length) and `graph_size` is Graph's stored size — the two differ because Graph's includes encoding overhead. Always registered (read tier, no new consent flag). `save_dir` defaults to a fresh OS temp directory; `filename` defaults to the attachment's own name, sanitised to a bare basename so a hostile sender-chosen filename cannot escape the download directory (path-traversal-safe, with a resolved-path containment re-check). `overwrite=False` refuses to clobber an existing file. Item attachments (embedded Outlook items) and reference attachments (cloud-file links) carry no bytes and are rejected with a clear error pointing reference attachments at the SharePoint MCP server. The `mailbox` parameter targets a shared mailbox (gated by `OUTLOOK_ALLOW_SHARED_MAILBOXES`, same as the other email tools). Closes the last unshipped item of the v0.2 batch ([#8](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues/8)); [#69](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues/69).
