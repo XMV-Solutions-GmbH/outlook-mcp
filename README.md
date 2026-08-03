@@ -30,7 +30,7 @@ Concretely, the agent gets these tools:
 
 | Tool | What the agent does | What ends up in Outlook |
 |---|---|---|
-| `ol_email_search`, `ol_email_list_unread`, `ol_email_read` | finds and reads inbox | nothing changes |
+| `ol_email_search`, `ol_email_list_unread`, `ol_email_read`, `ol_email_get_attachment` | finds and reads inbox, downloads attachments | nothing changes |
 | `ol_calendar_search`, `ol_calendar_list_events` | reads calendar | nothing changes |
 | `ol_status` | shows pending drafts created by this profile | nothing changes |
 | *(v0.2)* `ol_email_create_draft`, `ol_email_update_draft` | creates drafts in your Drafts folder | a draft appears — **you** review and click Send |
@@ -118,6 +118,7 @@ In v0.2, draft tools become available so the agent can write the reply email or 
 | `ol_email_search(query, folder?, from?, modified_after?, has_attachment?)` | Free-text search over the user's mailbox using Microsoft Graph `$search`. Returns hits with id, subject, from, received-at, snippet, web URL. |
 | `ol_email_list_unread(folder="Inbox", limit=50)` | Unread mails in the named folder, newest first. |
 | `ol_email_read(id, include_attachments=False)` | Full body (text + html) + headers + attachments-list for a single mail. |
+| `ol_email_get_attachment(message_id, attachment_id, save_dir?, filename?, overwrite=False)` | Downloads one **file** attachment to a local file. Returns its `path` + metadata (`name`, `content_type`, `size` = bytes written, `graph_size` = Graph's stored size, `is_inline`). Get the `attachment_id` from `ol_email_read(include_attachments=True)`. `save_dir` defaults to a fresh temp directory; the on-disk filename is sanitised so a hostile sender-chosen name can't escape it; `overwrite=False` refuses to clobber. Embedded-item and cloud-reference attachments are rejected (no bytes to download). |
 | `ol_calendar_search(query, calendar?, from_date?, to_date?)` | Events matching a free-text query. |
 | `ol_calendar_list_events(from_date, to_date, calendar="primary")` | Events in a date range with attendees and location. |
 | `ol_status()` | Pending drafts created by this MCP profile (empty in v0.1; populated once draft tools land in v0.2). |
