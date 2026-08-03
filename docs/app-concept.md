@@ -210,7 +210,7 @@ Pending sessions live in the MCP server process. If the server restarts before t
 
 ### Progress notifications
 
-When the calling MCP client advertises the progress capability, `ol_login_begin` streams periodic `time_remaining_s` countdown updates via FastMCP's `Context.report_progress`. Clients without the capability skip silently — bonus channel, not load-bearing. A broken progress channel never fails the tool; the implementation suppresses progress-emit exceptions broadly.
+When the calling MCP client advertises the progress capability, `ol_login_begin` streams periodic `time_remaining_s` countdown updates via the MCP server `Context.report_progress`. Clients without the capability skip silently — bonus channel, not load-bearing. A broken progress channel never fails the tool; the implementation suppresses progress-emit exceptions broadly.
 
 ### UX guidance for relaying user_code + verification_url
 

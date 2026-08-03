@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 from outlook_mcp.auth.flow import OutlookConsentNotConfiguredError
 from outlook_mcp.server import (
@@ -27,8 +27,8 @@ from outlook_mcp.server import (
 )
 
 
-def _list_tool_names(server: FastMCP) -> set[str]:
-    """Synchronously fetch tool names from a FastMCP server."""
+def _list_tool_names(server: MCPServer) -> set[str]:
+    """Synchronously fetch tool names from an MCPServer instance."""
     return {t.name for t in asyncio.run(server.list_tools())}
 
 
@@ -105,7 +105,7 @@ def test_drafts_false_skips_send_check(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_register_read_tools_adds_all_read_tools() -> None:
-    server = FastMCP("test-read-only")
+    server = MCPServer("test-read-only")
     register_read_tools(server)
     names = _list_tool_names(server)
     assert names == {
@@ -126,7 +126,7 @@ def test_login_tool_descriptions_carry_agent_instructions_marker() -> None:
     """Both ol_login_begin and ol_login_status MUST embed the literal
     `AGENT_INSTRUCTIONS:` marker — closes #42. The marker is the contract
     with pattern-matching MCP clients; rephrasing it breaks them."""
-    server = FastMCP("test-read-only")
+    server = MCPServer("test-read-only")
     register_read_tools(server)
     tools = asyncio.run(server.list_tools())
     login_tools = {t.name: t for t in tools if t.name in ("ol_login_begin", "ol_login_status")}
@@ -146,13 +146,13 @@ def test_login_begin_tool_annotations() -> None:
     success) but does NOT mutate any mailbox state — readOnlyHint=False,
     destructiveHint=False. Idempotent because re-calling while a
     pending session exists returns the same session."""
-    server = FastMCP("test-read-only")
+    server = MCPServer("test-read-only")
     register_read_tools(server)
     [login_begin_tool] = [t for t in asyncio.run(server.list_tools()) if t.name == "ol_login_begin"]
     assert login_begin_tool.annotations is not None
-    assert login_begin_tool.annotations.readOnlyHint is False
-    assert login_begin_tool.annotations.destructiveHint is False
-    assert login_begin_tool.annotations.idempotentHint is True
+    assert login_begin_tool.annotations.read_only_hint is False
+    assert login_begin_tool.annotations.destructive_hint is False
+    assert login_begin_tool.annotations.idempotent_hint is True
 
 
 def test_read_tools_have_readonly_annotation() -> None:
@@ -163,14 +163,14 @@ def test_read_tools_have_readonly_annotation() -> None:
     """
     _readwrite_exceptions = {"ol_login_begin"}
 
-    server = FastMCP("test-read-only")
+    server = MCPServer("test-read-only")
     register_read_tools(server)
     tools = asyncio.run(server.list_tools())
     for tool in tools:
         assert tool.annotations is not None, f"{tool.name} missing annotations"
         if tool.name in _readwrite_exceptions:
             continue
-        assert tool.annotations.readOnlyHint is True, (
+        assert tool.annotations.read_only_hint is True, (
             f"{tool.name} should be readOnlyHint=True; got {tool.annotations}"
         )
 
@@ -247,35 +247,35 @@ def test_module_level_server_refuses_when_drafts_true_send_unset(
 
 
 def test_register_write_tools_adds_email_create_draft() -> None:
-    server = FastMCP("test-with-drafts")
+    server = MCPServer("test-with-drafts")
     register_write_tools(server)
     names = _list_tool_names(server)
     assert "ol_email_create_draft" in names
 
 
 def test_register_write_tools_adds_email_update_draft() -> None:
-    server = FastMCP("test-with-drafts")
+    server = MCPServer("test-with-drafts")
     register_write_tools(server)
     names = _list_tool_names(server)
     assert "ol_email_update_draft" in names
 
 
 def test_register_write_tools_adds_email_discard_draft() -> None:
-    server = FastMCP("test-with-drafts")
+    server = MCPServer("test-with-drafts")
     register_write_tools(server)
     names = _list_tool_names(server)
     assert "ol_email_discard_draft" in names
 
 
 def test_register_write_tools_adds_calendar_create_event_draft() -> None:
-    server = FastMCP("test-with-drafts")
+    server = MCPServer("test-with-drafts")
     register_write_tools(server)
     names = _list_tool_names(server)
     assert "ol_calendar_create_event_draft" in names
 
 
 def test_register_write_tools_adds_calendar_discard_event_draft() -> None:
-    server = FastMCP("test-with-drafts")
+    server = MCPServer("test-with-drafts")
     register_write_tools(server)
     names = _list_tool_names(server)
     assert "ol_calendar_discard_event_draft" in names
@@ -284,28 +284,28 @@ def test_register_write_tools_adds_calendar_discard_event_draft() -> None:
 def test_calendar_create_event_draft_is_not_destructive() -> None:
     """Creating a tentative event APPENDS to the calendar — same
     semantic as creating an email draft. Not destructive."""
-    server = FastMCP("test-with-drafts")
+    server = MCPServer("test-with-drafts")
     register_write_tools(server)
     [tool] = [
         t for t in asyncio.run(server.list_tools()) if t.name == "ol_calendar_create_event_draft"
     ]
     assert tool.annotations is not None
-    assert tool.annotations.readOnlyHint is False
-    assert tool.annotations.destructiveHint is False
+    assert tool.annotations.read_only_hint is False
+    assert tool.annotations.destructive_hint is False
 
 
 def test_discard_draft_tool_is_destructive_and_idempotent() -> None:
     """DELETE on a draft removes it permanently — destructiveHint=True.
     Idempotent because re-deleting an already-gone draft is a no-op."""
-    server = FastMCP("test-with-drafts")
+    server = MCPServer("test-with-drafts")
     register_write_tools(server)
     [discard_tool] = [
         t for t in asyncio.run(server.list_tools()) if t.name == "ol_email_discard_draft"
     ]
     assert discard_tool.annotations is not None
-    assert discard_tool.annotations.readOnlyHint is False
-    assert discard_tool.annotations.destructiveHint is True
-    assert discard_tool.annotations.idempotentHint is True
+    assert discard_tool.annotations.read_only_hint is False
+    assert discard_tool.annotations.destructive_hint is True
+    assert discard_tool.annotations.idempotent_hint is True
 
 
 def test_create_draft_tool_is_not_readonly_not_destructive() -> None:
@@ -314,29 +314,29 @@ def test_create_draft_tool_is_not_readonly_not_destructive() -> None:
     NOT destructive — drafts don't overwrite or delete anything,
     they just append. The annotation pair lets Claude Code's
     permission prompt render the right messaging."""
-    server = FastMCP("test-with-drafts")
+    server = MCPServer("test-with-drafts")
     register_write_tools(server)
     [draft_tool] = [
         t for t in asyncio.run(server.list_tools()) if t.name == "ol_email_create_draft"
     ]
     assert draft_tool.annotations is not None
-    assert draft_tool.annotations.readOnlyHint is False
-    assert draft_tool.annotations.destructiveHint is False
+    assert draft_tool.annotations.read_only_hint is False
+    assert draft_tool.annotations.destructive_hint is False
 
 
 def test_update_draft_tool_is_destructive() -> None:
     """A PATCH overwrites the previous draft state on Graph, so
     destructiveHint=True. Idempotent because re-applying the same
     PATCH yields the same result."""
-    server = FastMCP("test-with-drafts")
+    server = MCPServer("test-with-drafts")
     register_write_tools(server)
     [update_tool] = [
         t for t in asyncio.run(server.list_tools()) if t.name == "ol_email_update_draft"
     ]
     assert update_tool.annotations is not None
-    assert update_tool.annotations.readOnlyHint is False
-    assert update_tool.annotations.destructiveHint is True
-    assert update_tool.annotations.idempotentHint is True
+    assert update_tool.annotations.read_only_hint is False
+    assert update_tool.annotations.destructive_hint is True
+    assert update_tool.annotations.idempotent_hint is True
 
 
 def test_no_send_tool_in_default_config() -> None:
@@ -348,7 +348,7 @@ def test_no_send_tool_in_default_config() -> None:
     (covered by test_register_send_tools_adds_email_send_draft below).
     Without that explicit second flag, no send_* tool exists — that's
     the load-bearing invariant for the default consent posture."""
-    server = FastMCP("test-with-drafts-only")
+    server = MCPServer("test-with-drafts-only")
     register_read_tools(server)
     register_write_tools(server)
     # Crucially: NO register_send_tools call here.
@@ -369,7 +369,7 @@ def test_register_send_tools_adds_email_send_draft() -> None:
     """When the OUTLOOK_ALLOW_SEND opt-in is active and
     register_send_tools is invoked, the ol_email_send_draft tool
     becomes visible to the agent."""
-    server = FastMCP("test-with-send")
+    server = MCPServer("test-with-send")
     register_write_tools(server)
     register_send_tools(server)
     names = _list_tool_names(server)
@@ -380,13 +380,13 @@ def test_send_draft_tool_is_destructive_not_idempotent() -> None:
     """Sending a draft is irreversible (the mail leaves the user's
     mailbox and is delivered) — destructiveHint=True. Re-sending an
     already-sent draft yields a 404 from Graph — idempotentHint=False."""
-    server = FastMCP("test-with-send")
+    server = MCPServer("test-with-send")
     register_send_tools(server)
     [send_tool] = [t for t in asyncio.run(server.list_tools()) if t.name == "ol_email_send_draft"]
     assert send_tool.annotations is not None
-    assert send_tool.annotations.readOnlyHint is False
-    assert send_tool.annotations.destructiveHint is True
-    assert send_tool.annotations.idempotentHint is False
+    assert send_tool.annotations.read_only_hint is False
+    assert send_tool.annotations.destructive_hint is True
+    assert send_tool.annotations.idempotent_hint is False
 
 
 def test_module_level_server_registers_send_when_both_flags_true(
@@ -612,10 +612,10 @@ def test_delete_tool_annotations_are_destructive() -> None:
     because 404 is treated as success."""
     from outlook_mcp.server import register_delete_tools
 
-    server = FastMCP("test-delete")
+    server = MCPServer("test-delete")
     register_delete_tools(server)
     [delete_tool] = [t for t in asyncio.run(server.list_tools()) if t.name == "ol_email_delete"]
     assert delete_tool.annotations is not None
-    assert delete_tool.annotations.readOnlyHint is False
-    assert delete_tool.annotations.destructiveHint is True
-    assert delete_tool.annotations.idempotentHint is True
+    assert delete_tool.annotations.read_only_hint is False
+    assert delete_tool.annotations.destructive_hint is True
+    assert delete_tool.annotations.idempotent_hint is True
