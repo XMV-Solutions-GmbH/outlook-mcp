@@ -57,7 +57,7 @@ from outlook_mcp.login_state import cache_upn, get_login_session_registry
 from outlook_mcp.tools._common import GRAPH_BASE, auth_headers
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import Context
+    from mcp.server.mcpserver import Context
 
 _log = logging.getLogger("outlook-mcp.login_begin")
 

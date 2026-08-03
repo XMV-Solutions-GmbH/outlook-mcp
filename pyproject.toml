@@ -8,7 +8,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-server-outlook"
-version = "0.8.0"
+version = "0.9.0"
 description = "MCP server for Microsoft 365 Outlook (mail + calendar) with audit-preserving drafts and never-auto-send."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -36,7 +36,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    "mcp>=1.2",
+    "mcp>=2,<3",
     "mcp-microsoft-graph-auth>=0.1.1",
     "httpx>=0.28",
     "keyring>=25",

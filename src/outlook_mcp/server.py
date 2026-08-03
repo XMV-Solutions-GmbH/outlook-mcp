@@ -1,7 +1,14 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # SPDX-FileCopyrightText: 2026 XMV Solutions GmbH
 # SPDX-FileContributor: David Koller <david.koller@xmv.de>
-"""MCP server: registers the `ol_*` tools with FastMCP and runs on stdio.
+"""MCP server: registers the `ol_*` tools with the high-level server and runs on stdio.
+
+Uses the ``mcp`` SDK's high-level ``MCPServer`` (the FastMCP successor,
+importable from ``mcp.server`` since ``mcp`` 2.x). The decorator surface
+(``@server.tool(...)``), ``list_tools()`` and ``run()`` are the same shape
+FastMCP exposed, so the registration logic below is unchanged bar the
+import and the type name. See ``docs/proposals/0001-mcp-2x-server-api.md``
+for the migration decision.
 
 Each tool is wrapped with explicit `ToolAnnotations` so MCP clients
 (notably Claude Code's permission system) can render the right
@@ -26,7 +33,8 @@ import os
 import sys
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 from mcp.types import ToolAnnotations
 
 from outlook_mcp.auth import get_token, is_personal_account
@@ -151,15 +159,15 @@ def _guard_mailbox(mailbox: str | None, *, profile: str) -> None:
         )
 
 
-def register_read_tools(mcp_instance: FastMCP) -> None:
+def register_read_tools(mcp_instance: MCPServer) -> None:
     """Register the unconditionally-available read tools on `mcp_instance`."""
 
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="Search Outlook Email",
-            readOnlyHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         ),
         description=(
             "Search a mailbox via Microsoft Graph $search. Returns "
@@ -199,9 +207,9 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="List Unread Outlook Email",
-            readOnlyHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         ),
         description=(
             "List unread mails in `folder` (default 'Inbox'), newest "
@@ -230,9 +238,9 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="Read Outlook Email",
-            readOnlyHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         ),
         description=(
             "Fetch a single mail by Graph id with full body (text + "
@@ -263,9 +271,9 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="Download Outlook Email Attachment",
-            readOnlyHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         ),
         description=(
             "Download a single file attachment of a mail to a local "
@@ -314,9 +322,9 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="Search Outlook Calendar",
-            readOnlyHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         ),
         description=(
             "Search calendar events by free-text query against the "
@@ -347,9 +355,9 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="List Outlook Calendar Events",
-            readOnlyHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         ),
         description=(
             "List events on `calendar` (default 'primary') between "
@@ -377,9 +385,9 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="List Outlook Drafts Created by this Profile",
-            readOnlyHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         ),
         description=(
             "List drafts (mails + calendar events) this MCP profile has "
@@ -395,9 +403,9 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="List Outlook Email Drafts",
-            readOnlyHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         ),
         description=(
             "List drafts in the user's Drafts folder. With "
@@ -424,9 +432,9 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="Outlook Login Status",
-            readOnlyHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         ),
         description=(
             "Return the current Microsoft 365 sign-in status for "
@@ -454,10 +462,10 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="Outlook Login Begin",
-            readOnlyHint=False,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
         ),
         description=(
             "Drive the OAuth Device Code flow as an MCP tool. "
@@ -515,7 +523,7 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
         )
 
 
-def register_write_tools(mcp_instance: FastMCP) -> None:
+def register_write_tools(mcp_instance: MCPServer) -> None:
     """Register the gated draft-creating tools on `mcp_instance`.
 
     Only invoked when `OUTLOOK_ALLOW_DRAFTS` is truthy. The functions
@@ -529,10 +537,10 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="Create Outlook Email Draft",
-            readOnlyHint=False,
-            destructiveHint=False,
-            idempotentHint=False,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=False,
+            open_world_hint=False,
         ),
         description=(
             "Create a new mail draft in the user's Drafts folder. The "
@@ -579,10 +587,10 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="Update Outlook Email Draft",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         ),
         description=(
             "Patch fields on a draft this MCP profile created. Only "
@@ -630,10 +638,10 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="Discard Outlook Email Draft",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         ),
         description=(
             "Delete a draft this MCP profile created. Refuses to "
@@ -650,10 +658,10 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="Create Outlook Calendar Event Draft",
-            readOnlyHint=False,
-            destructiveHint=False,
-            idempotentHint=False,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=False,
+            open_world_hint=False,
         ),
         description=(
             "Create a tentative event on the user's calendar with "
@@ -696,10 +704,10 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="Discard Outlook Calendar Event Draft",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         ),
         description=(
             "Delete a calendar event this MCP profile created. "
@@ -714,7 +722,7 @@ def register_write_tools(mcp_instance: FastMCP) -> None:
         _do_calendar_discard_event_draft(event_id, profile=_get_profile())
 
 
-def register_send_tools(mcp_instance: FastMCP) -> None:
+def register_send_tools(mcp_instance: MCPServer) -> None:
     """Register the send tool. Only invoked when both
     `OUTLOOK_ALLOW_DRAFTS` AND `OUTLOOK_ALLOW_SEND` are truthy.
 
@@ -733,10 +741,10 @@ def register_send_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="Send Outlook Email Draft",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=False,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=False,
+            open_world_hint=False,
         ),
         description=(
             "Send a draft this MCP profile created. Refuses to send "
@@ -756,7 +764,7 @@ def register_send_tools(mcp_instance: FastMCP) -> None:
         return _do_email_send_draft(draft_id, profile=_get_profile())
 
 
-def register_delete_tools(mcp_instance: FastMCP) -> None:
+def register_delete_tools(mcp_instance: MCPServer) -> None:
     """Register `ol_email_delete`. Only invoked when `OUTLOOK_ALLOW_DELETE=true`.
 
     Independent of the drafts/send chain (closes outlook-mcp #45): an
@@ -777,10 +785,10 @@ def register_delete_tools(mcp_instance: FastMCP) -> None:
     @mcp_instance.tool(
         annotations=ToolAnnotations(
             title="Delete Outlook Email",
-            readOnlyHint=False,
-            destructiveHint=True,
-            idempotentHint=True,
-            openWorldHint=False,
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=True,
+            open_world_hint=False,
         ),
         description=(
             "Delete a message by Graph id. Destructive — moves the "
@@ -815,8 +823,8 @@ def register_delete_tools(mcp_instance: FastMCP) -> None:
         )
 
 
-def _build_server() -> FastMCP:
-    """Build and return a FastMCP server with the right tools registered.
+def _build_server() -> MCPServer:
+    """Build and return an MCPServer with the right tools registered.
 
     Validates all four consent env vars up-front via
     `validate_consent_config()` — if any strictly-required one is
@@ -827,7 +835,7 @@ def _build_server() -> FastMCP:
     sees it on stderr; no silent read-only fallback.
     """
     cfg = validate_consent_config()
-    server = FastMCP("mcp-server-outlook")
+    server = MCPServer("mcp-server-outlook")
     register_read_tools(server)
     if cfg.drafts:
         register_write_tools(server)
@@ -842,7 +850,7 @@ def _build_server() -> FastMCP:
 # get the consent-validation error immediately on startup rather
 # than mid-protocol-handshake.
 try:
-    mcp: FastMCP = _build_server()
+    mcp: MCPServer = _build_server()
 except OutlookConsentNotConfiguredError as err:
     # Print the help text to stderr so MCP-client log windows show
     # it verbatim — the message IS the onboarding doc. Then re-raise

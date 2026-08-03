@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
 
+## [v0.9.0] — 2026-08-03
+
+### Changed
+
+- **Migrated the server layer from `mcp.server.fastmcp.FastMCP` to the mcp 2.x high-level `MCPServer` API.** mcp 2.0.0 removed the `mcp.server.fastmcp` module, so installs that resolved `mcp>=2` failed to start (`ModuleNotFoundError: No module named 'mcp.server.fastmcp'`). The server now imports `MCPServer` from `mcp.server` — the in-SDK FastMCP successor — with the same `@server.tool(...)` decorator, `list_tools()`, `run()` and `Context` surface. All **17 tools** (10 read + 5 draft + send + delete), their schemas, descriptions and `ToolAnnotations` are **unchanged**; the never-auto-send posture and the consent-flag gating are untouched. Migration decision recorded in [`docs/proposals/0001-mcp-2x-server-api.md`](docs/proposals/0001-mcp-2x-server-api.md). Closes [#72](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues/72).
+- **`ToolAnnotations` construction and read-back use snake_case field names** (`read_only_hint`, `destructive_hint`, `idempotent_hint`, `open_world_hint`). mcp 2.x's `ToolAnnotations` still accepts the camelCase aliases at construction, but mypy-strict only knows the snake_case fields and a listed tool's annotation is snake_case-only on read. No behavioural change — the emitted annotation values are identical.
+
+### Dependencies
+
+- **`mcp` bumped to `>=2,<3`** (was `>=1.2`, unbounded). The removed upper bound is what let `mcp` 2.0.0 in silently; the new range pins the supported major and makes `uv tool install mcp-server-outlook` work without the `--with "mcp<2"` workaround.
+
 ## [v0.8.0] — 2026-08-03
 
 ### Added
