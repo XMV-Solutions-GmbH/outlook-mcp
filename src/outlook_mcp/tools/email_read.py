@@ -7,7 +7,7 @@ Wraps `GET /me/messages/{id}`. Read-only. The agent gets enough to
 quote the mail (text + HTML body), see all the headers it might need
 to draft a reply (to/cc/bcc/from/replyTo/conversationId/internetMessageId),
 and a list of attachments by name + size + content-type. Attachment
-*bytes* are NOT downloaded here — that's the v0.2 `ol_email_get_attachment`
+*bytes* are NOT downloaded here — that's the `ol_email_get_attachment`
 tool. Including bodies inline keeps this a single Graph round-trip.
 
 `include_attachments=False` (default) only fetches the message

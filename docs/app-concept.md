@@ -312,11 +312,11 @@ Plus an architectural defensive: the MCP only updates / discards drafts that *it
 - Python 3.11+, packaged for `uvx` install on PyPI (`mcp-server-outlook`).
 - Tests: integration tests against a dedicated test M365 tenant in CI (env-var-injected creds).
 
-Deferred to v0.2:
+Shipped after v0.1 (were originally deferred to v0.2):
 
-- Draft tools (`ol_email_create_draft`, `ol_email_update_draft`, `ol_email_discard_draft`, `ol_email_list_drafts`, `ol_calendar_create_event_draft`, `ol_calendar_discard_event_draft`).
-- Attachment access (`ol_email_get_attachment`).
-- Resumable upload for large attachments.
+- Draft tools (`ol_email_create_draft`, `ol_email_update_draft`, `ol_email_discard_draft`, `ol_email_list_drafts`, `ol_calendar_create_event_draft`, `ol_calendar_discard_event_draft`) — v0.2.
+- Resumable upload for large attachments (drafts) — v0.5.
+- Attachment download (`ol_email_get_attachment`) — writes one file attachment to a local file. Shipped in the current release.
 
 Deferred / out of scope:
 

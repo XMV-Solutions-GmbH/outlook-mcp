@@ -112,6 +112,7 @@ def test_register_read_tools_adds_all_read_tools() -> None:
         "ol_email_search",
         "ol_email_list_unread",
         "ol_email_read",
+        "ol_email_get_attachment",
         "ol_email_list_drafts",
         "ol_calendar_search",
         "ol_calendar_list_events",

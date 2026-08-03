@@ -48,6 +48,7 @@ from outlook_mcp.tools.calendar_search import search as _do_calendar_search
 from outlook_mcp.tools.email_create_draft import create_draft as _do_email_create_draft
 from outlook_mcp.tools.email_delete import delete_message as _do_email_delete
 from outlook_mcp.tools.email_discard_draft import discard_draft as _do_email_discard_draft
+from outlook_mcp.tools.email_get_attachment import get_attachment as _do_email_get_attachment
 from outlook_mcp.tools.email_list_drafts import list_drafts as _do_email_list_drafts
 from outlook_mcp.tools.email_list_unread import list_unread as _do_email_list_unread
 from outlook_mcp.tools.email_read import read_email as _do_email_read
@@ -239,8 +240,8 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
             "internetMessageId), and attachment list. Read-only — does "
             "NOT mark the mail read. Pass `include_attachments=True` "
             "to include attachment metadata (id, name, content_type, "
-            "size, is_inline); attachment bytes are NOT downloaded "
-            "(deferred to v0.2 ol_email_get_attachment). "
+            "size, is_inline); attachment bytes are NOT downloaded here "
+            "— use ol_email_get_attachment to download a file attachment. "
             "`mailbox` (optional, default None) targets a shared mailbox "
             "via its UPN. Only usable when "
             "OUTLOOK_ALLOW_SHARED_MAILBOXES=true; otherwise raises."
@@ -255,6 +256,57 @@ def register_read_tools(mcp_instance: FastMCP) -> None:
         return _do_email_read(
             message_id,
             include_attachments=include_attachments,
+            mailbox=mailbox,
+            profile=_get_profile(),
+        )
+
+    @mcp_instance.tool(
+        annotations=ToolAnnotations(
+            title="Download Outlook Email Attachment",
+            readOnlyHint=True,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+        description=(
+            "Download a single file attachment of a mail to a local "
+            "file and return its path + metadata. Read-only — does NOT "
+            "mark the mail read. Give the `message_id` and the "
+            "`attachment_id` (obtained from ol_email_read with "
+            "include_attachments=True, which lists each attachment's "
+            "id/name/content_type/size/is_inline). Returns {path, name, "
+            "content_type, size, graph_size, attachment_id, message_id, "
+            "mailbox, is_inline}: `size` is the bytes actually written, "
+            "`graph_size` is Graph's stored size (they differ — Graph's "
+            "includes encoding overhead). "
+            "`save_dir` (optional): directory to write into — default is "
+            "a fresh OS temp directory. `filename` (optional): override "
+            "the on-disk name — default is the attachment's own name, "
+            "sanitised to a bare filename. `overwrite` (default False): "
+            "refuse to clobber an existing file unless True. "
+            "Only FILE attachments can be downloaded; embedded Outlook "
+            "items and reference (cloud-file) attachments raise — a "
+            "reference attachment points at a OneDrive/SharePoint file, "
+            "reachable via the SharePoint MCP server. "
+            "`mailbox` (optional, default None) targets a shared mailbox "
+            "via its UPN. Only usable when "
+            "OUTLOOK_ALLOW_SHARED_MAILBOXES=true; otherwise raises."
+        ),
+    )
+    def ol_email_get_attachment(
+        message_id: str,
+        attachment_id: str,
+        save_dir: str | None = None,
+        filename: str | None = None,
+        overwrite: bool = False,
+        mailbox: str | None = None,
+    ) -> dict[str, Any]:
+        _guard_mailbox(mailbox, profile=_get_profile())
+        return _do_email_get_attachment(
+            message_id,
+            attachment_id,
+            save_dir=save_dir,
+            filename=filename,
+            overwrite=overwrite,
             mailbox=mailbox,
             profile=_get_profile(),
         )
