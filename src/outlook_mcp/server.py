@@ -45,6 +45,7 @@ from outlook_mcp.auth.flow import (
     OutlookConsentNotConfiguredError,
     validate_consent_config,
 )
+from outlook_mcp.tools._common import is_group_mailbox
 from outlook_mcp.tools.calendar_create_event_draft import (
     create_event_draft as _do_calendar_create_event_draft,
 )
@@ -111,10 +112,26 @@ def delete_enabled() -> bool:
     return validate_consent_config().delete
 
 
-def _guard_mailbox(mailbox: str | None, *, profile: str) -> None:
-    """Refuse a non-None `mailbox` arg when shared mailboxes can't work.
+def group_mailboxes_enabled() -> bool:
+    """True iff `OUTLOOK_ALLOW_GROUP_MAILBOXES=true`.
 
-    Two distinct reasons the `mailbox` parameter can be rejected:
+    Optional flag: unset/empty = False. When True, the email read tools
+    accept `mailbox="group:<group-id>"`, routing to
+    `/groups/{id}/threads`, and the OAuth scope adds
+    Group-Conversation.Read.All.
+    """
+    return validate_consent_config().group_mailboxes
+
+
+def _guard_mailbox(mailbox: str | None, *, profile: str, write: bool = False) -> None:
+    """Refuse a non-None `mailbox` arg when it cannot work.
+
+    A group mailbox (`group:<id>`) is checked first and separately: it
+    is a different Graph surface with its own consent flag and its own
+    scope, so an operator who enabled shared mailboxes has NOT thereby
+    enabled group access. Neither flag implies the other.
+
+    For the shared-mailbox form, two distinct reasons to reject:
 
     1. **XMV policy**: `OUTLOOK_ALLOW_SHARED_MAILBOXES` is not enabled
        in the operator's `.mcp.json`. This is a config decision — the
@@ -136,6 +153,30 @@ def _guard_mailbox(mailbox: str | None, *, profile: str) -> None:
     advertises the `mailbox` parameter, the guard runs at call-time.
     """
     if mailbox is None:
+        return
+
+    if is_group_mailbox(mailbox):
+        if write:
+            raise PermissionError(
+                "Group mailboxes are read-only through this server. "
+                "Group-Conversation.Read.All grants no write access, and a "
+                "group conversation is shared by every member — deleting a "
+                "post removes it for all of them. Use the group's own "
+                "Outlook UI if that is genuinely intended.",
+            )
+        if not group_mailboxes_enabled():
+            raise PermissionError(
+                'Addressing a Microsoft 365 group (`mailbox="group:<id>"`) '
+                "is only available when OUTLOOK_ALLOW_GROUP_MAILBOXES=true. "
+                "Set the flag in your .mcp.json env block and re-sign-in to "
+                "grant Group-Conversation.Read.All on the consent screen. "
+                "Note this is a separate decision from "
+                "OUTLOOK_ALLOW_SHARED_MAILBOXES: group mail is a different "
+                "Graph surface, not a shared mailbox.",
+            )
+        # Group conversations are a work-or-school-only construct, so the
+        # personal-account check below would be redundant: a consumer
+        # token has no groups to read.
         return
 
     if not shared_mailboxes_enabled():
@@ -174,13 +215,23 @@ def register_read_tools(mcp_instance: MCPServer) -> None:
             "matching mails with id, subject, from, received-at, "
             "snippet, web URL, has-attachments. Read-only. Filter args: "
             "folder (well-known name like 'Inbox'/'Drafts' or folder id), "
-            "from_address (sender email), modified_after (ISO date), "
-            "has_attachment (bool). "
+            "from_address (sender email), to_address (delivered-to "
+            "email), modified_after (ISO date), has_attachment (bool). "
             "`mailbox` (optional, default None) targets a shared mailbox "
             "via its UPN (e.g. 'sekretariat@xmv.de'). Only usable when "
             "OUTLOOK_ALLOW_SHARED_MAILBOXES=true; otherwise raises. The "
             "signed-in user must have FullAccess on the target mailbox "
-            "(typically granted via Exchange Add-MailboxPermission)."
+            "(typically granted via Exchange Add-MailboxPermission).\n\n"
+            "`mailbox='group:<group-id>'` searches a Microsoft 365 GROUP "
+            "mailbox instead, gated on OUTLOOK_ALLOW_GROUP_MAILBOXES=true. "
+            "Two behavioural differences to expect: matching is "
+            "subject-level only (Graph has no $search over group "
+            "conversations, so topic/preview/sender names are matched "
+            "client-side — bodies are NOT searched), and `id` is a "
+            "conversation-thread id, which ol_email_read accepts with the "
+            "same `mailbox` value. The group id is required: an address "
+            "cannot be resolved to an id without a directory-read "
+            "permission this server does not request."
         ),
     )
     def ol_email_search(
@@ -191,6 +242,7 @@ def register_read_tools(mcp_instance: MCPServer) -> None:
         has_attachment: bool | None = None,
         limit: int = 25,
         mailbox: str | None = None,
+        to_address: str | None = None,
     ) -> list[dict[str, Any]]:
         _guard_mailbox(mailbox, profile=_get_profile())
         return _do_email_search(
@@ -201,6 +253,7 @@ def register_read_tools(mcp_instance: MCPServer) -> None:
             has_attachment=has_attachment,
             limit=limit,
             mailbox=mailbox,
+            to_address=to_address,
             profile=_get_profile(),
         )
 
@@ -814,7 +867,7 @@ def register_delete_tools(mcp_instance: MCPServer) -> None:
         mailbox: str | None = None,
         permanent: bool = False,
     ) -> dict[str, Any]:
-        _guard_mailbox(mailbox, profile=_get_profile())
+        _guard_mailbox(mailbox, profile=_get_profile(), write=True)
         return _do_email_delete(
             message_id,
             mailbox=mailbox,

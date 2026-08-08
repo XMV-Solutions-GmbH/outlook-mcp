@@ -38,3 +38,4 @@ Each record is `NNNN-short-slug.md` and captures at minimum:
 | # | Title | Status |
 |---|---|---|
 | [0001](0001-mcp-2x-server-api.md) | Migrate the server layer to the mcp 2.x `MCPServer` API | Implemented |
+| [0002](0002-group-mailboxes.md) | Read Microsoft 365 group mailboxes | Implemented |

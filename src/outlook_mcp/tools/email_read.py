@@ -23,7 +23,13 @@ from typing import Any
 import httpx
 
 from outlook_mcp.auth import get_token
-from outlook_mcp.tools._common import GRAPH_BASE, auth_headers, mailbox_path
+from outlook_mcp.tools._common import (
+    GRAPH_BASE,
+    auth_headers,
+    is_group_mailbox,
+    mailbox_path,
+)
+from outlook_mcp.tools._groups import read_thread
 
 
 def read_email(
@@ -44,6 +50,12 @@ def read_email(
     the MCP layer must opt in explicitly via the env var or get a
     Graph-side 403.
 
+    `mailbox="group:<group-id>"`: a Microsoft 365 group mailbox, where
+    `message_id` is a **conversation-thread** id as returned by
+    `ol_email_search`. A thread can hold several posts, so the result
+    additionally carries `posts` (each with its own from/to/body); the
+    top-level body fields mirror the first post.
+
     Returns a dict with: id, subject, from, to, cc, bcc, reply_to,
     received_at, sent_at, body_text, body_html, web_url, conversation_id,
     internet_message_id, has_attachments, attachments (list of
@@ -60,6 +72,16 @@ def read_email(
     """
     if not message_id or not message_id.strip():
         raise ValueError("ol_email_read requires a non-empty message_id")
+
+    if is_group_mailbox(mailbox):
+        assert mailbox is not None  # narrowed by is_group_mailbox
+        token = get_token(profile)
+        client = http if http is not None else httpx.Client(timeout=30.0)
+        try:
+            return read_thread(mailbox, message_id, token=token, client=client)
+        finally:
+            if http is None:
+                client.close()
 
     box = mailbox_path(mailbox)
     token = get_token(profile)

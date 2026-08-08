@@ -426,16 +426,70 @@ def _set_full_consent(
     send: str | None = None,
     shared: str | None = None,
     delete: str | None = None,
+    groups: str | None = None,
 ) -> None:
     _set_consent(monkeypatch, drafts=drafts, send=send)
     for name, value in [
         ("OUTLOOK_ALLOW_SHARED_MAILBOXES", shared),
         ("OUTLOOK_ALLOW_DELETE", delete),
+        ("OUTLOOK_ALLOW_GROUP_MAILBOXES", groups),
     ]:
         if value is None:
             monkeypatch.delenv(name, raising=False)
         else:
             monkeypatch.setenv(name, value)
+
+
+# ── group-mailbox consent + routing ──────────────────────────────────────
+
+_GROUP_MAILBOX = "group:cdf5cd73-94c4-4c56-bdd1-0467dba73667"
+
+
+def test_group_mailboxes_enabled_default_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    from outlook_mcp.server import group_mailboxes_enabled
+
+    _set_full_consent(monkeypatch, drafts="false")
+    assert group_mailboxes_enabled() is False
+
+
+def test_group_mailboxes_enabled_typo_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    from outlook_mcp.auth.flow import OutlookConsentNotConfiguredError
+    from outlook_mcp.server import group_mailboxes_enabled
+
+    _set_full_consent(monkeypatch, drafts="false", groups="yes")
+    with pytest.raises(OutlookConsentNotConfiguredError, match="OUTLOOK_ALLOW_GROUP_MAILBOXES"):
+        group_mailboxes_enabled()
+
+
+def test_guard_refuses_group_when_group_flag_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refused even with shared mailboxes on: the two flags are separate
+    consent decisions over different Graph surfaces."""
+    from outlook_mcp.server import _guard_mailbox
+
+    _set_full_consent(monkeypatch, drafts="false", shared="true")
+    with pytest.raises(PermissionError, match="OUTLOOK_ALLOW_GROUP_MAILBOXES"):
+        _guard_mailbox(_GROUP_MAILBOX, profile="default")
+
+
+def test_guard_allows_group_when_flag_on_without_shared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Conversely, group access does not require the shared-mailbox flag —
+    and needs no token probe, since groups are work/school-only anyway."""
+    from outlook_mcp.server import _guard_mailbox
+
+    _set_full_consent(monkeypatch, drafts="false", groups="true")
+    _guard_mailbox(_GROUP_MAILBOX, profile="default")  # no exception
+
+
+def test_guard_refuses_group_on_a_write_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deleting from a group conversation removes it for every member, and
+    the scope grants no write anyway — refuse before Graph does."""
+    from outlook_mcp.server import _guard_mailbox
+
+    _set_full_consent(monkeypatch, drafts="false", groups="true", delete="true")
+    with pytest.raises(PermissionError, match="read-only"):
+        _guard_mailbox(_GROUP_MAILBOX, profile="default", write=True)
 
 
 # ── shared_mailboxes_enabled / delete_enabled accessors ──────────────────

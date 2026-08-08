@@ -93,6 +93,17 @@ ALLOW_SHARED_MAILBOXES_ENV = "OUTLOOK_ALLOW_SHARED_MAILBOXES"
 # blast-radius cap stays at "operator decided to enable delete at all."
 ALLOW_DELETE_ENV = "OUTLOOK_ALLOW_DELETE"
 
+# v0.9: opt-in to reading Microsoft 365 **group** mailboxes.
+# Separate from ALLOW_SHARED_MAILBOXES because it is a different
+# Microsoft Graph surface, not a wider version of the same one: a group
+# mailbox is not reachable under /users/{upn}/ at all (Exchange answers
+# `ErrorGroupIsUsedInNonGroupURI`), it lives under /groups/{id}/threads,
+# and it needs its own delegated scope. Conflating the two flags would
+# mean an operator who wanted a Sekretariats-Postfach silently also
+# consented to Group-Conversation.Read.All across every group they
+# belong to.
+ALLOW_GROUP_MAILBOXES_ENV = "OUTLOOK_ALLOW_GROUP_MAILBOXES"
+
 # `OUTLOOK_ALLOW_DRAFTS` and `OUTLOOK_ALLOW_SEND` MUST be set to
 # exactly "true" or "false" (case-insensitive, trimmed). Earlier
 # versions accepted any of {"1","true","yes","on"} as truthy and
@@ -266,6 +277,21 @@ def _consent_help_text(name: str, raw: str | None) -> str:
             f'  "{ALLOW_SEND_ENV}": "false"     — drafts only, no send tool\n\n'
             f"See README §Authentication for the design rationale."
         )
+    if name == ALLOW_GROUP_MAILBOXES_ENV:
+        return (
+            f"ERROR: mcp-server-outlook got an invalid {ALLOW_GROUP_MAILBOXES_ENV} "
+            f"value ({got}).\n\n"
+            f"This flag opts the server into reading Microsoft 365 GROUP "
+            f"mailboxes, addressed as mailbox='group:<group-id>'. Group mail "
+            f"lives under /groups/{{id}}/threads — a different Graph surface "
+            f"from shared mailboxes — so the consent screen adds "
+            f"Group-Conversation.Read.All.\n\n"
+            f"Valid values:\n\n"
+            f'  "{ALLOW_GROUP_MAILBOXES_ENV}": "true"   — enable group-mailbox reads\n'
+            f'  "{ALLOW_GROUP_MAILBOXES_ENV}": "false"  — no group access (the safe default)\n'
+            f"  (unset)                                 — same as false\n\n"
+            f"See README §Authentication for the design rationale."
+        )
     if name == ALLOW_SHARED_MAILBOXES_ENV:
         return (
             f"ERROR: mcp-server-outlook got an invalid {ALLOW_SHARED_MAILBOXES_ENV} "
@@ -316,6 +342,10 @@ class ConsentConfig:
     send: bool
     shared_mailboxes: bool
     delete: bool
+    # Defaulted, unlike its siblings: this field was added after
+    # ConsentConfig was public, and a required fifth positional would
+    # break every existing four-argument construction.
+    group_mailboxes: bool = False
 
 
 def validate_consent_config() -> ConsentConfig:
@@ -342,11 +372,13 @@ def validate_consent_config() -> ConsentConfig:
     send = _strict_bool_env(ALLOW_SEND_ENV) if drafts else False
     shared_mailboxes = _optional_strict_bool_env(ALLOW_SHARED_MAILBOXES_ENV)
     delete = _optional_strict_bool_env(ALLOW_DELETE_ENV)
+    group_mailboxes = _optional_strict_bool_env(ALLOW_GROUP_MAILBOXES_ENV)
     return ConsentConfig(
         drafts=drafts,
         send=send,
         shared_mailboxes=shared_mailboxes,
         delete=delete,
+        group_mailboxes=group_mailboxes,
     )
 
 
@@ -410,6 +442,13 @@ def resolve_scopes() -> tuple[str, ...]:
         # flag was designed for (deleting old PDFs in a Sekretariats-
         # Postfach via ol_email_delete) needs write too.
         scopes = (*scopes, "Mail.ReadWrite.Shared")
+    if cfg.group_mailboxes:
+        # Least-privileged scope that reads /groups/{id}/threads and
+        # .../posts. Deliberately NOT Group.Read.All: that one also
+        # grants directory reads over every group in the tenant, which
+        # this server never needs. Group resolution stays on
+        # /me/memberOf, which the already-requested User.Read covers.
+        scopes = (*scopes, "Group-Conversation.Read.All")
     return scopes
 
 
@@ -426,6 +465,7 @@ __all__ = [
     "ACCOUNT_TYPE_WORK_OR_SCHOOL",
     "ALLOW_DELETE_ENV",
     "ALLOW_DRAFTS_ENV",
+    "ALLOW_GROUP_MAILBOXES_ENV",
     "ALLOW_SEND_ENV",
     "ALLOW_SHARED_MAILBOXES_ENV",
     "AUTHORITY_BASE",

@@ -123,6 +123,47 @@ In v0.2, draft tools become available so the agent can write the reply email or 
 | `ol_calendar_list_events(from_date, to_date, calendar="primary")` | Events in a date range with attendees and location. |
 | `ol_status()` | Pending drafts created by this MCP profile (empty in v0.1; populated once draft tools land in v0.2). |
 
+### Reading a Microsoft 365 group mailbox
+
+A group mailbox is **not** a shared mailbox. Exchange refuses the `/users/{upn}/`
+path for one outright (`ErrorGroupIsUsedInNonGroupURI`), so it gets its own
+opt-in and its own address form:
+
+```jsonc
+"env": {
+  "OUTLOOK_ALLOW_DRAFTS": "false",
+  "OUTLOOK_ALLOW_GROUP_MAILBOXES": "true"   // adds Group-Conversation.Read.All
+}
+```
+
+```python
+ol_email_search("verify", mailbox="group:cdf5cd73-94c4-4c56-bdd1-0467dba73667")
+ol_email_read(thread_id,  mailbox="group:cdf5cd73-94c4-4c56-bdd1-0467dba73667")
+```
+
+Four things to know:
+
+- **The group id is required, not its address.** Resolving an address to an id
+  needs a directory-read permission this server deliberately does not request.
+  Find the id in the Microsoft 365 admin center, or via
+  `GET /me/memberOf/microsoft.graph.group`.
+- **Search is subject-level.** Graph has no `$search` over group conversations,
+  so `topic` / `preview` / sender names are matched client-side. Bodies are not
+  searched.
+- **`id` is a conversation-thread id.** `ol_email_read` accepts it with the same
+  `mailbox=` value and additionally returns `posts`, since a thread can hold
+  several.
+- **`to` and `to_address` work for plus addresses.** The delivered recipient is
+  recovered from the MAPI property `PidTagDisplayTo` — the only place it
+  survives on a group post. Being a *display* field, it holds the display name
+  when the address resolves to a directory object, and the raw address when it
+  does not (which is every `box+case@example.com` form). That makes
+  `to_address=` a dependable filter for plus-addressed conventions, and not a
+  general recipient filter.
+
+Group access is **read-only**; write paths refuse a `group:` mailbox before
+reaching Graph.
+
 ### Write tools — **deferred to v0.2** (opt-in via `OUTLOOK_ALLOW_DRAFTS=true`)
 
 | Tool | Purpose |
@@ -164,6 +205,7 @@ Most tool surface is identical across the two account types — `/me/messages`, 
 | Mail + Calendar read / search / draft / send | ✅ | ✅ |
 | `ol_email_delete` (incl. permanentDelete) | ✅ | ✅ |
 | `mailbox=` parameter on email tools (shared mailbox via FullAccess-Delegate) | ✅ (with `OUTLOOK_ALLOW_SHARED_MAILBOXES=true`) | ❌ — Microsoft doesn't expose shared mailboxes on consumer identities |
+| `mailbox="group:<id>"` on email read tools (Microsoft 365 group conversations) | ✅ (with `OUTLOOK_ALLOW_GROUP_MAILBOXES=true`) | ❌ — group mailboxes are a work/school construct |
 
 When a personal-account agent calls a tool with a non-None `mailbox=`, the MCP server refuses client-side with a clear message instead of letting Microsoft return a confusing 403.
 
@@ -253,14 +295,15 @@ Agent:  [ol_login_begin() returns success]
 
 ### Safety model
 
-Six layers of "don't accidentally do something irreversible":
+Seven layers of "don't accidentally do something irreversible":
 
 1. **Your MCP client (Claude Code) prompts before each tool call by default.** Read tools are flagged read-only; draft tools are flagged "creates draft (no send)"; send + delete tools are flagged destructive — you see the difference at the prompt.
 2. **Drafts opt-in via env (v0.2).** Without `OUTLOOK_ALLOW_DRAFTS=true`, the draft-creation tools aren't even registered. The agent literally can't draft.
 3. **Send opt-in via a separate env (v0.3).** Without `OUTLOOK_ALLOW_SEND=true`, the send tool is not registered AND `Mail.Send` is not in the OAuth scope request. The default consent screen stays drafts-only.
 4. **Shared-mailbox opt-in via a separate env (v0.5).** Without `OUTLOOK_ALLOW_SHARED_MAILBOXES=true`, the email tools' `mailbox` parameter is refused with a clear error AND `Mail.ReadWrite.Shared` is not in the OAuth scope request. Default-install agents can only see / modify the signed-in user's mailbox.
-5. **Delete opt-in via a separate env (v0.5).** Without `OUTLOOK_ALLOW_DELETE=true`, `ol_email_delete` is not registered. Independent of the drafts/send chain — enabling drafts doesn't enable delete and vice versa.
-6. **Never autonomous send.** Even with both send + delete opt-ins active, the agent must explicitly call `ol_email_send_draft(draft_id)` / `ol_email_delete(message_id)` with the specific id. There is no path where an agent's tool call results in a sent email or deleted message without the human first being able to see the target in Outlook.
+5. **Group-mailbox opt-in via a separate env.** Without `OUTLOOK_ALLOW_GROUP_MAILBOXES=true`, `mailbox="group:<id>"` is refused AND `Group-Conversation.Read.All` is not in the OAuth scope request. Deliberately separate from the shared-mailbox flag: opting into one Sekretariats-Postfach should not also grant reading conversations across every group you belong to. Group access is read-only — write paths refuse it before reaching Graph.
+6. **Delete opt-in via a separate env (v0.5).** Without `OUTLOOK_ALLOW_DELETE=true`, `ol_email_delete` is not registered. Independent of the drafts/send chain — enabling drafts doesn't enable delete and vice versa.
+7. **Never autonomous send.** Even with both send + delete opt-ins active, the agent must explicitly call `ol_email_send_draft(draft_id)` / `ol_email_delete(message_id)` with the specific id. There is no path where an agent's tool call results in a sent email or deleted message without the human first being able to see the target in Outlook.
 
 The threat model is "your local OS account is trusted" — same as `~/.ssh/id_rsa`, `gh` tokens, `aws` config. The tool isn't designed to defend against host compromise; it's designed to keep audit trails honest under normal use.
 
