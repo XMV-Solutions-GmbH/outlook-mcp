@@ -23,7 +23,13 @@ from typing import Any
 import httpx
 
 from outlook_mcp.auth import get_token
-from outlook_mcp.tools._common import GRAPH_BASE, auth_headers, mailbox_path
+from outlook_mcp.tools._common import (
+    GRAPH_BASE,
+    auth_headers,
+    is_group_mailbox,
+    mailbox_path,
+)
+from outlook_mcp.tools._groups import search_threads
 
 
 def search(
@@ -35,6 +41,7 @@ def search(
     has_attachment: bool | None = None,
     limit: int = 25,
     mailbox: str | None = None,
+    to_address: str | None = None,
     profile: str = "default",
     http: httpx.Client | None = None,
 ) -> list[dict[str, Any]]:
@@ -45,6 +52,14 @@ def search(
     FullAccess on (`/users/{upn}/...`). The MCP-tool wrapper enforces
     that `mailbox` is only usable when
     `OUTLOOK_ALLOW_SHARED_MAILBOXES=true`.
+    `mailbox="group:<group-id>"`: a Microsoft 365 group mailbox, gated
+    on `OUTLOOK_ALLOW_GROUP_MAILBOXES=true`.
+
+    **The group path matches differently.** Graph offers no `$search`
+    over group conversations, so the query is matched client-side
+    against each thread's topic, preview and sender names — it never
+    sees message bodies. Treat a group search as a subject-level search,
+    not the full-text one the mailbox path performs.
 
     Returns at most `limit` hits, each a dict with `id`, `subject`,
     `from` (display + email), `received_at` (ISO 8601), `snippet`
@@ -58,6 +73,11 @@ def search(
       Archive). Pass a Graph folder-id if the well-known name doesn't
       cover your case.
     - `from_address="alice@example.com"` — only mails from that sender.
+    - `to_address="box+case@example.com"` — only mails delivered to that
+      address. On a group mailbox this is resolved from the MAPI
+      property `PidTagDisplayTo`, which is the only place the delivered
+      recipient survives — useful for plus-addressed conventions where
+      the address identifies the sender's purpose.
     - `modified_after="2024-01-01T00:00:00Z"` — ISO 8601 cutoff.
     - `has_attachment=True` — only mails with attachments.
 
@@ -72,6 +92,31 @@ def search(
         raise ValueError("ol_email_search requires a non-empty query")
     if limit <= 0:
         raise ValueError(f"limit must be positive, got {limit}")
+
+    if is_group_mailbox(mailbox):
+        assert mailbox is not None  # narrowed by is_group_mailbox
+        if folder is not None:
+            raise ValueError(
+                "folder narrowing is not available on group mailboxes — a "
+                "group's conversations are not organised into mail folders",
+            )
+        token = get_token(profile)
+        client = http if http is not None else httpx.Client(timeout=30.0)
+        try:
+            return search_threads(
+                mailbox,
+                query,
+                token=token,
+                client=client,
+                limit=limit,
+                from_address=from_address,
+                modified_after=modified_after,
+                has_attachment=has_attachment,
+                to_address=to_address,
+            )
+        finally:
+            if http is None:
+                client.close()
 
     box = mailbox_path(mailbox)
     base = (
@@ -88,6 +133,10 @@ def search(
     filter_parts: list[str] = []
     if from_address:
         filter_parts.append(f"from/emailAddress/address eq '{from_address}'")
+    if to_address:
+        filter_parts.append(
+            f"toRecipients/any(r: r/emailAddress/address eq '{to_address}')",
+        )
     if modified_after:
         filter_parts.append(f"receivedDateTime ge {modified_after}")
     if has_attachment is not None:

@@ -234,3 +234,21 @@ def test_resolve_scopes_delete_typo_raises(monkeypatch: pytest.MonkeyPatch) -> N
     _set_full_consent(monkeypatch, drafts="false", delete="enabled")
     with pytest.raises(OutlookConsentNotConfiguredError, match="OUTLOOK_ALLOW_DELETE"):
         resolve_scopes()
+
+
+def test_group_mailboxes_adds_least_privileged_group_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Group-Conversation.Read.All, NOT Group.Read.All: the latter would
+    also grant tenant-wide directory reads this server never performs."""
+    monkeypatch.setenv("OUTLOOK_ALLOW_DRAFTS", "false")
+    monkeypatch.setenv("OUTLOOK_ALLOW_GROUP_MAILBOXES", "true")
+    scopes = resolve_scopes()
+    assert "Group-Conversation.Read.All" in scopes
+    assert "Group.Read.All" not in scopes
+
+
+def test_group_scope_absent_when_flag_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OUTLOOK_ALLOW_DRAFTS", "false")
+    monkeypatch.delenv("OUTLOOK_ALLOW_GROUP_MAILBOXES", raising=False)
+    assert "Group-Conversation.Read.All" not in resolve_scopes()

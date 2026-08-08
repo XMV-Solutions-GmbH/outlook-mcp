@@ -20,12 +20,68 @@ to the tools/ subpackage".
 
 from __future__ import annotations
 
+import re
 from urllib.parse import quote
 
 from outlook_mcp import __version__
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 USER_AGENT = f"mcp-server-outlook/{__version__}"
+
+# `mailbox="group:<group-id>"` selects a Microsoft 365 group mailbox.
+# A prefix rather than a bare id because the value has to stay
+# unambiguous against a UPN, and because the two route to different
+# Graph surfaces entirely — see `is_group_mailbox`.
+GROUP_PREFIX = "group:"
+
+# Entra object ids are GUIDs. Validated rather than passed through so a
+# malformed value fails here with a readable message instead of as an
+# opaque Graph 400, and so nothing can be smuggled into the URL path.
+_GUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def is_group_mailbox(mailbox: str | None) -> bool:
+    """True iff `mailbox` addresses a Microsoft 365 group mailbox.
+
+    Group mail is NOT reachable under `/users/{upn}/` — Exchange
+    rejects that with `ErrorGroupIsUsedInNonGroupURI` — so this is a
+    routing decision, not a permissions one.
+    """
+    return mailbox is not None and mailbox.strip().lower().startswith(GROUP_PREFIX)
+
+
+def group_id(mailbox: str) -> str:
+    """Extract and validate the group id from `group:<group-id>`.
+
+    Raises `ValueError` if the value is not `group:` followed by a GUID.
+
+    The id is required because a group's *address* cannot be resolved to
+    its id without a directory-read scope (`/groups?$filter=mail eq …`
+    answers 403 under this server's permissions), and requesting one
+    just to look up a name would be a far larger consent ask than
+    reading the conversations themselves. Callers pass the id.
+    """
+    raw = mailbox.strip()
+    if not raw.lower().startswith(GROUP_PREFIX):
+        raise ValueError(f"not a group mailbox: {mailbox!r}")
+    candidate = raw[len(GROUP_PREFIX) :].strip()
+    if not _GUID_RE.match(candidate):
+        raise ValueError(
+            f"group mailbox must be 'group:<group-id>' where <group-id> is the "
+            f"group's Entra object id (a GUID); got {candidate!r}. "
+            f"A group's e-mail address cannot be used here: resolving an "
+            f"address to an id needs a directory-read permission this server "
+            f"deliberately does not request.",
+        )
+    return candidate
+
+
+def group_path(mailbox: str) -> str:
+    """Return the Graph URL fragment addressing a group mailbox."""
+    return f"groups/{group_id(mailbox)}"
 
 
 def auth_headers(token: str) -> dict[str, str]:
@@ -63,7 +119,9 @@ def mailbox_path(mailbox: str | None) -> str:
     accepts the decoded form, but we don't want surprise behaviour if
     the value flows through other clients first.
 
-    Raises `ValueError` if `mailbox` is provided but empty/whitespace.
+    Raises `ValueError` if `mailbox` is provided but empty/whitespace,
+    or if it addresses a group (`group:<id>`) — group mail does not live
+    under `/users/` and the caller must route it via `group_path`.
     """
     if mailbox is None:
         return "me"
@@ -71,5 +129,11 @@ def mailbox_path(mailbox: str | None) -> str:
     if not cleaned:
         raise ValueError(
             "mailbox must be a non-empty UPN (e.g. 'shared@contoso.com') or None",
+        )
+    if is_group_mailbox(cleaned):
+        raise ValueError(
+            "group mailboxes are not addressable under /users/ — route via "
+            "group_path(). Microsoft Exchange rejects the /users/ form with "
+            "ErrorGroupIsUsedInNonGroupURI.",
         )
     return f"users/{quote(cleaned, safe='@.+-_')}"

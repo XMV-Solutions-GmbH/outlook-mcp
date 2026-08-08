@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
 
+### Added
+
+- **Read Microsoft 365 group mailboxes**, addressed as `mailbox="group:<group-id>"` on `ol_email_search` and `ol_email_read`. A group mailbox is a distinct Graph surface, not a shared mailbox: Exchange rejects the `/users/{upn}/` path for one outright with `ErrorGroupIsUsedInNonGroupURI`, no matter the scope or delegation. Group mail lives under `/groups/{id}/threads`. Design record in [`docs/proposals/0002-group-mailboxes.md`](docs/proposals/0002-group-mailboxes.md).
+- **`OUTLOOK_ALLOW_GROUP_MAILBOXES`** — a separate opt-in (unset = off, typo raises) that also adds `Group-Conversation.Read.All` to the OAuth scope request. Deliberately *not* folded into `OUTLOOK_ALLOW_SHARED_MAILBOXES`: enabling one Sekretariats-Postfach must not silently also grant reading conversations across every group the user belongs to. The scope is the least-privileged one that reads group threads — `Group.Read.All` would additionally grant tenant-wide directory reads the server never performs.
+- **`to_address` filter on `ol_email_search`**, and a `to` field on group hits. Group posts carry no `toRecipients`, which would make a plus-addressed group mailbox (`box+case@example.com`) unable to report which address a message arrived on. The delivered recipient is recovered from the MAPI property `PidTagDisplayTo`.
+
+### Security
+
+- Group mailboxes are **read-only**: write paths (`ol_email_delete`) refuse a `group:` mailbox before reaching Graph. The scope grants no write, and a group conversation is shared — deleting a post removes it for every member.
+
 ## [v0.9.0] — 2026-08-03
 
 ### Changed

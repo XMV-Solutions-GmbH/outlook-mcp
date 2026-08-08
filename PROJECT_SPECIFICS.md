@@ -120,7 +120,7 @@ The strongest end-to-end check of an MCP server is to have it installed and exer
 
 ### Microsoft Graph scopes (delegated)
 
-`Mail.Read`, `Mail.ReadWrite`, `Calendars.Read`, `Calendars.ReadWrite`, `User.Read`, `offline_access`. Lazy/opt-in: `Mail.Send` (only with `OUTLOOK_ALLOW_SEND=true`). Never requested: anything in the `admin.*` namespace.
+`Mail.Read`, `Mail.ReadWrite`, `Calendars.Read`, `Calendars.ReadWrite`, `User.Read`, `offline_access`. Lazy/opt-in: `Mail.Send` (only with `OUTLOOK_ALLOW_SEND=true`), `Mail.ReadWrite.Shared` (only with `OUTLOOK_ALLOW_SHARED_MAILBOXES=true`), `Group-Conversation.Read.All` (only with `OUTLOOK_ALLOW_GROUP_MAILBOXES=true`). Never requested: anything in the `admin.*` namespace, and no directory-read scope — not `Group.Read.All`, not `Directory.Read.All`. Group *discovery* rides on `/me/memberOf`, which `User.Read` already covers; the consequence is that a group must be addressed by its object id, since resolving an address to an id is a directory read. See [`docs/proposals/0002-group-mailboxes.md`](docs/proposals/0002-group-mailboxes.md).
 
 ## Glossary
 
