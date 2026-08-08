@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
 
+## [v0.10.0] — 2026-08-08
+
 ### Added
 
 - **Read Microsoft 365 group mailboxes**, addressed as `mailbox="group:<group-id>"` on `ol_email_search` and `ol_email_read`. A group mailbox is a distinct Graph surface, not a shared mailbox: Exchange rejects the `/users/{upn}/` path for one outright with `ErrorGroupIsUsedInNonGroupURI`, no matter the scope or delegation. Group mail lives under `/groups/{id}/threads`. Design record in [`docs/proposals/0002-group-mailboxes.md`](docs/proposals/0002-group-mailboxes.md).
@@ -228,6 +230,7 @@ First release after v0.1.0, bundling the v0.2 draft surface and the v0.3 login +
 - CI: lint + test + harness jobs in GitHub Actions on every push to `main` and intra-repo PR. Branch protection on `main` requires `lint` + `test` to be green and CODEOWNERS approval.
 - Release pipeline: tag-driven OIDC Trusted-Publisher PyPI publish (`mcp-server-outlook`).
 
-[Unreleased]: https://github.com/XMV-Solutions-GmbH/outlook-mcp/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/XMV-Solutions-GmbH/outlook-mcp/compare/v0.10.0...HEAD
+[v0.10.0]: https://github.com/XMV-Solutions-GmbH/outlook-mcp/compare/v0.3.0...v0.10.0
 [v0.3.0]: https://github.com/XMV-Solutions-GmbH/outlook-mcp/compare/v0.1.0...v0.3.0
 [v0.1.0]: https://github.com/XMV-Solutions-GmbH/outlook-mcp/releases/tag/v0.1.0
