@@ -33,9 +33,9 @@ read the `tid` claim to route business logic.
 
 from __future__ import annotations
 
-import base64
-import json
 from typing import Any
+
+from outlook_mcp.auth.identity import decode_claims
 
 # Microsoft's global consumer-tenant GUID. Documented at
 # https://learn.microsoft.com/en-us/azure/active-directory/develop/v2-protocols-oidc#fetch-the-openid-connect-metadata-document
@@ -47,30 +47,12 @@ CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad"
 def _decode_jwt_claims(access_token: str) -> dict[str, Any]:
     """Decode the payload of a JWT without verifying the signature.
 
-    We don't need verification here — the caller already trusts the
-    token (it came from `get_token()` after Microsoft Identity issued
-    it). We just need to read claims to route logic.
-
-    Microsoft Identity v2.0 access tokens are always JWTs with three
-    dot-separated base64url segments: header, payload, signature.
-    Returns the decoded payload as a dict, or `{}` if the token can't
-    be parsed (e.g. opaque tokens, malformed strings) so callers can
-    default to "treat as work/school" — the more restrictive bucket.
+    Thin adapter over `identity.decode_claims`, which is the one JWT
+    reader in this package. Keeps this module's historic contract:
+    an unreadable token yields `{}`, not None, so callers can fall
+    through to "treat as work/school" — the more restrictive bucket.
     """
-    parts = access_token.split(".")
-    if len(parts) != 3:
-        return {}
-    payload_segment = parts[1]
-    # base64url pad-correction: the segment may be missing trailing `=`
-    padding = "=" * (-len(payload_segment) % 4)
-    try:
-        raw = base64.urlsafe_b64decode(payload_segment + padding)
-        decoded = json.loads(raw)
-    except (ValueError, json.JSONDecodeError):
-        return {}
-    if not isinstance(decoded, dict):
-        return {}
-    return decoded
+    return decode_claims(access_token) or {}
 
 
 def is_personal_account(access_token: str) -> bool:

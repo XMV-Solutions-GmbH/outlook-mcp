@@ -16,6 +16,8 @@ Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/iss
 
 ### Changed
 
+- **One JWT reader, and the declared `pyjwt` dependency is now actually used.** `pyjwt[crypto]` was a declared runtime dependency that nothing imported, while `auth/account_type.py` hand-rolled its own base64 payload decoder. `auth/identity.decode_claims()` is now the single JWT-reading primitive in the package — PyJWT with `verify_signature=False`, since the token came from our own store and its claims authorise nothing — and `account_type` delegates to it. Behaviour on real Microsoft tokens is unchanged; a three-segment string with an unreadable *header* is now correctly treated as "not a JWT" rather than decoded for its payload alone, which only affects synthetic inputs.
+
 - **`ol_login_status` omits `signed_in_user_upn` when the identity cannot be derived from the live token**, instead of returning it as `null`. A wrong or unreadable identity misleads an agent about which mailbox it is addressing; absence is the honest answer. `status` is unaffected — an account whose UPN cannot be determined is still `signed_in`.
 
 ## [v0.10.0] — 2026-08-08

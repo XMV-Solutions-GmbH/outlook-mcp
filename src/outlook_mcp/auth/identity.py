@@ -22,11 +22,10 @@ the point: a wrong identity is worse than an unknown one (issue #83).
 
 from __future__ import annotations
 
-import base64
-import binascii
 import hashlib
-import json
 from typing import Any
+
+import jwt
 
 # Order matters. `upn` is the work/school account's user principal
 # name. `unique_name` is the v1.0-issuer spelling of the same thing.
@@ -46,24 +45,32 @@ def token_fingerprint(access_token: str) -> str:
     return hashlib.sha256(access_token.encode("utf-8")).hexdigest()
 
 
-def _decode_claims(access_token: str) -> dict[str, Any] | None:
-    """Decode the payload segment of a JWT access token.
+def decode_claims(access_token: str) -> dict[str, Any] | None:
+    """Decode the claims of a JWT access token, or None if it is not one.
 
-    Returns None for anything that is not a well-formed three-segment
-    JWT with a JSON-object payload — notably personal-Microsoft-account
-    tokens, which are opaque. We do NOT verify the signature: the token
-    came out of our own token store and is only being read to answer
-    "who is this for", never to authorise anything.
+    The single JWT-reading primitive in this package — `account_type`
+    and `granted` both call it, so there is one answer to "what does
+    this token say" rather than three hand-rolled base64 decoders that
+    can disagree at the edges.
+
+    Signature verification is deliberately off. The token came out of
+    our own token store, Microsoft Identity issued it, and we never
+    authorise anything on the strength of these claims — we only read
+    them to describe the token to its owner. Verifying would require
+    fetching and rotating Microsoft's signing keys to answer a question
+    that does not turn on authenticity.
+
+    Returns None for anything that is not a JWT with a JSON-object
+    payload — notably personal-Microsoft-account tokens, which are
+    opaque by design. None means "unknown", never "empty".
     """
-    segments = access_token.split(".")
-    if len(segments) != 3:
-        return None
-    payload = segments[1]
-    payload += "=" * (-len(payload) % 4)
     try:
-        raw = base64.urlsafe_b64decode(payload)
-        claims = json.loads(raw)
-    except (binascii.Error, ValueError, UnicodeDecodeError):
+        claims = jwt.decode(
+            access_token,
+            options={"verify_signature": False},
+            algorithms=["RS256"],
+        )
+    except jwt.DecodeError:
         return None
     return claims if isinstance(claims, dict) else None
 
@@ -76,7 +83,7 @@ def upn_from_access_token(access_token: str) -> str | None:
     the identity claims. Callers fall back to `/me`; none of them may
     substitute a remembered value.
     """
-    claims = _decode_claims(access_token)
+    claims = decode_claims(access_token)
     if claims is None:
         return None
     for name in _UPN_CLAIMS:
