@@ -31,11 +31,14 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any
+from typing import Any, cast
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
+from mcp.server.mcpserver.tools.base import Tool
+from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase, FuncMetadata
 from mcp.types import ToolAnnotations
+from pydantic import ConfigDict
 
 from outlook_mcp.auth import get_token, is_personal_account
 from outlook_mcp.auth.flow import (
@@ -876,8 +879,88 @@ def register_delete_tools(mcp_instance: MCPServer) -> None:
         )
 
 
+def _forbid_unknown_arguments(server: MCPServer) -> None:
+    """Make every registered tool reject arguments it does not declare.
+
+    The SDK derives each tool's argument model from the handler's
+    signature, and that model inherits pydantic's default
+    `extra="ignore"` — so an argument the caller invented is dropped
+    before the handler ever sees it, and the call succeeds with the
+    caller's intent silently discarded. That is how a
+    `body_type="html"` that is not a parameter of
+    `ol_email_create_draft` (the real ones are `body` for Markdown and
+    `body_html` for raw HTML) produced drafts with visible `<p>` tags:
+    the argument vanished, the body went through the safe-mode
+    Markdown renderer, and nothing was reported.
+
+    The caller here is a language model reading a tool description, so
+    a wrong parameter name is an ordinary event and the only safe
+    handling is to fail loudly. Each tool's argument model is replaced
+    with a subclass that forbids extras and whose error names both the
+    rejected argument and the parameters that do exist; `parameters`
+    is regenerated so the advertised JSON schema carries
+    `additionalProperties: false` and a well-behaved client refuses
+    the call before it reaches us.
+    """
+    for tool in server._tool_manager.list_tools():
+        _make_tool_strict(tool)
+
+
+class _StrictFuncMetadata(FuncMetadata):
+    """`FuncMetadata` that refuses arguments the tool does not declare.
+
+    The rejection lives here rather than in the argument model so the
+    error can name the parameters that DO exist: the caller is a
+    language model that just guessed a name, and "extra inputs are not
+    permitted" leaves it guessing again.
+    """
+
+    accepted_arguments: tuple[str, ...]
+    tool_name: str
+
+    def validate_arguments(self, arguments_to_validate: dict[str, Any]) -> dict[str, Any]:
+        unknown = sorted(set(arguments_to_validate) - set(self.accepted_arguments))
+        if unknown:
+            raise ValueError(
+                f"unknown argument(s) {', '.join(unknown)} for tool {self.tool_name}. "
+                f"Accepted parameters: {', '.join(self.accepted_arguments) or '(none)'}. "
+                "The call was refused rather than run with the argument dropped."
+            )
+        return super().validate_arguments(arguments_to_validate)
+
+
+def _make_tool_strict(tool: Tool) -> None:
+    """Tighten one tool: forbid extras in its argument model, and
+    swap in the metadata that explains a rejection."""
+    arg_model = tool.fn_metadata.arg_model
+    accepted = tuple(sorted(field.alias or name for name, field in arg_model.model_fields.items()))
+    strict_model = cast(
+        "type[ArgModelBase]",
+        type(
+            arg_model.__name__,
+            (arg_model,),
+            {
+                "model_config": ConfigDict(extra="forbid"),
+                "__module__": arg_model.__module__,
+            },
+        ),
+    )
+    tool.fn_metadata = _StrictFuncMetadata(
+        arg_model=strict_model,
+        output_schema=tool.fn_metadata.output_schema,
+        output_model=tool.fn_metadata.output_model,
+        wrap_output=tool.fn_metadata.wrap_output,
+        accepted_arguments=accepted,
+        tool_name=tool.name,
+    )
+    tool.parameters = strict_model.model_json_schema(by_alias=True)
+
+
 def _build_server() -> MCPServer:
     """Build and return an MCPServer with the right tools registered.
+
+    Every registered tool is then made to reject arguments it does
+    not declare — see `_forbid_unknown_arguments`.
 
     Validates all four consent env vars up-front via
     `validate_consent_config()` — if any strictly-required one is
@@ -896,6 +979,7 @@ def _build_server() -> MCPServer:
             register_send_tools(server)
     if cfg.delete:
         register_delete_tools(server)
+    _forbid_unknown_arguments(server)
     return server
 
 
