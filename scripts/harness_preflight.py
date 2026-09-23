@@ -27,7 +27,21 @@ identity ends up behind `OUTLOOK_HARNESS_TOKEN_JSON` it keeps working.
 
 from __future__ import annotations
 
+import os
 import sys
+
+# Safe read-only defaults, set before anything imports the auth stack.
+# `get_token` refreshes an expired token, which calls `resolve_scopes()`,
+# which refuses to run without an explicit OUTLOOK_ALLOW_DRAFTS /
+# OUTLOOK_ALLOW_SEND decision. `tests/conftest.py` does the same thing
+# for the test layers; this script is standalone and has to do it
+# itself, or it fails with a consent-configuration error and never
+# reaches the question it exists to answer. `setdefault`, so a caller
+# who has already decided keeps their decision.
+os.environ.setdefault("OUTLOOK_ALLOW_DRAFTS", "false")
+os.environ.setdefault("OUTLOOK_ALLOW_SEND", "false")
+# CI runners have no OS keyring.
+os.environ.setdefault("OUTLOOK_TOKEN_STORE", "file")
 
 from outlook_mcp.auth import AuthRequiredError, get_token
 from outlook_mcp.auth.store import PlainFileTokenStore
@@ -55,6 +69,16 @@ def main() -> int:
         # ::error:: renders as an annotation on the run summary, so the
         # cause is visible without opening the log.
         print(f"::error title=Harness credential unusable::{exc}", file=sys.stderr)
+        print(_RENEWAL_HINT, file=sys.stderr)
+        return 1
+    except Exception as exc:
+        # Anything else — a malformed cache file, a network failure, a
+        # misconfiguration — still has to arrive as one readable line
+        # rather than a traceback that looks like a code defect.
+        print(
+            f"::error title=Harness credential could not be checked::{exc!r}",
+            file=sys.stderr,
+        )
         print(_RENEWAL_HINT, file=sys.stderr)
         return 1
 
