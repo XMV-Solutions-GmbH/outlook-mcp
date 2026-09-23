@@ -105,6 +105,21 @@ distinction it draws:
 | Secret present, credential works | silent, tests run |
 | Secret present, credential dead | **job fails** with one `::error::` |
 
+## The limit of this fix
+
+GitHub **automatically disables scheduled workflows in a public repository
+after 60 days with no repository activity**, and emails the admins first. So
+the keep-alive is not unconditional: a repo that goes completely quiet loses
+its schedule at day 60, and the credential then ages out ~90 days after
+whatever the last scheduled run was. That is still a large improvement — the
+credential survives roughly five months of total silence instead of three —
+but it is a delay, not a guarantee.
+
+This is worth knowing rather than worth engineering around: the disable notice
+goes to the admins, and a repo that has seen no activity for two months has a
+bigger problem than its harness credential. If the schedule is ever reported
+as disabled, re-enable it and trigger one `workflow_dispatch` run.
+
 ## Consequences for future maintainers
 
 - The scheduled run will fail every Monday while the secret holds a dead
@@ -115,4 +130,5 @@ distinction it draws:
 - Nothing here names a mailbox. Whichever identity ends up behind
   `OUTLOOK_HARNESS_TOKEN_JSON`, the keep-alive is indifferent to it.
 - The weekly run is what keeps the credential alive. Disabling the schedule,
-  or letting the harness job start skipping, re-arms the same 90-day fuse.
+  letting the harness job start skipping, or letting GitHub disable the
+  schedule for inactivity, all re-arm the same 90-day fuse.
