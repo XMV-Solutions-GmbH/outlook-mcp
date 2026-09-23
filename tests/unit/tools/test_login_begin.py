@@ -45,6 +45,7 @@ from mcp_microsoft_graph_auth import LoginSession
 
 from outlook_mcp.auth.tokens import CachedToken
 from outlook_mcp.login_state import (
+    cache_upn,
     cached_upn,
     get_login_session_registry,
     reset_for_tests,
@@ -140,8 +141,10 @@ async def test_login_begin_happy_path() -> None:
     session = await _await_task("default")
     assert session.status == "success"
     assert session.signed_in_user_upn == "anna@xmv.de"
-    # UPN cached for downstream login_status calls.
-    assert cached_upn("default") == "anna@xmv.de"
+    # UPN cached for downstream login_status calls — bound to the
+    # access token it was derived from (issue #83).
+    assert cached_upn("default", token="AT-final") == "anna@xmv.de"
+    assert cached_upn("default", token="AT-some-other-login") is None
 
 
 @respx.mock
@@ -370,7 +373,7 @@ async def test_login_begin_signed_in_user_upn_none_when_me_4xx() -> None:
     session = await _await_task("default")
     assert session.status == "success"
     assert session.signed_in_user_upn is None
-    assert cached_upn("default") is None
+    assert cached_upn("default", token="AT-final") is None
 
 
 @respx.mock
@@ -581,3 +584,23 @@ def test_module_exports_login_begin() -> None:
     """Sanity: the public function name matches what server.py
     imports."""
     assert callable(login_begin_module.login_begin)
+
+
+@respx.mock
+async def test_login_begin_clears_a_previous_users_cached_upn() -> None:
+    """Issue #83: signing a profile in again must not leave the
+    previous account's identity readable, even when the new sign-in's
+    own identity lookup fails."""
+    cache_upn("default", "user-a@xmv.de", token="AT-user-a")
+
+    respx.post(DEVICE_CODE_URL).respond(json=_device_code_response_json())
+    respx.post(TOKEN_URL).respond(200, json=_success_token_json())
+    respx.get(ME_URL).respond(503)
+
+    await login_begin(profile="default", account_type="work_or_school")
+    session = await _await_task("default")
+
+    assert session.status == "success"
+    assert session.signed_in_user_upn is None
+    assert cached_upn("default", token="AT-user-a") is None
+    assert cached_upn("default", token="AT-final") is None

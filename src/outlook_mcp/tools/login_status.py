@@ -29,14 +29,14 @@ point.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 import httpx
 from mcp_microsoft_graph_auth import public_view
 
 from outlook_mcp.auth import AuthRequiredError, get_token
-from outlook_mcp.login_state import cache_upn, cached_upn, get_login_session_registry
-from outlook_mcp.tools._common import GRAPH_BASE, auth_headers
+from outlook_mcp.login_state import get_login_session_registry
+from outlook_mcp.tools._identity import resolve_upn
 
 
 def login_status(
@@ -56,6 +56,10 @@ def login_status(
     `signed_in_user_upn`, `user_code`, `verification_url`,
     `verification_url_complete`, `time_remaining_s`, `expires_at`,
     `error` depending on the state.
+
+    `signed_in_user_upn` is derived from the access token actually in
+    use and is **omitted entirely** when it cannot be — never guessed,
+    never carried over from an earlier sign-in (issue #83).
     """
     # 1. Active probe: try to get a usable token.
     try:
@@ -64,11 +68,9 @@ def login_status(
         token = None
 
     if token is not None:
-        upn = cached_upn(profile)
+        upn = resolve_upn(profile=profile, token=token, http=http)
         if upn is None:
-            upn = _fetch_upn(token=token, http=http)
-            if upn is not None:
-                cache_upn(profile, upn)
+            return {"status": "signed_in"}
         return {
             "status": "signed_in",
             "signed_in_user_upn": upn,
@@ -109,34 +111,6 @@ def login_status(
         "previous_session_status": session.status,
         "error": error,
     }
-
-
-def _fetch_upn(*, token: str, http: httpx.Client | None) -> str | None:
-    """Round-trip /me?$select=userPrincipalName to learn who the token belongs to.
-
-    Returns None on any failure (network blip, 4xx, malformed JSON) —
-    the status response is still useful without the UPN. Sub-second
-    in the typical case; we do at most one of these per
-    profile-state-transition because of `cache_upn`.
-    """
-    client = http if http is not None else httpx.Client(timeout=15.0)
-    try:
-        response = client.get(
-            f"{GRAPH_BASE}/me",
-            headers=auth_headers(token),
-            params={"$select": "userPrincipalName"},
-        )
-        response.raise_for_status()
-        payload = response.json()
-        if not isinstance(payload, dict):
-            return None
-        upn = payload.get("userPrincipalName")
-        return cast("str | None", upn) if isinstance(upn, str) else None
-    except (httpx.HTTPError, ValueError):
-        return None
-    finally:
-        if http is None:
-            client.close()
 
 
 def _default_error_message(status: str) -> str:
