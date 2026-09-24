@@ -80,18 +80,22 @@ def _fresh_token(access_token: str = "AT") -> CachedToken:
     )
 
 
-def _jwt_token(upn: str) -> CachedToken:
-    """A work/school-shaped access token carrying its own `upn` claim."""
+def _jwt_token(upn: str, *, scp: str = "") -> CachedToken:
+    """A work/school-shaped access token carrying its own `upn` claim,
+    and optionally an `scp` claim naming the scopes it was granted."""
 
     def seg(obj: dict[str, object]) -> str:
         return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
 
-    access = f"{seg({'alg': 'none'})}.{seg({'upn': upn})}.sig"
+    claims: dict[str, object] = {"upn": upn}
+    if scp:
+        claims["scp"] = scp
+    access = f"{seg({'alg': 'none'})}.{seg(claims)}.sig"
     return CachedToken(
         access_token=access,
         refresh_token="RT",
         expires_at=time.time() + 3600,
-        scope="",
+        scope=scp,
     )
 
 
@@ -461,3 +465,36 @@ def test_failed_identity_lookup_cannot_resurrect_a_previous_upn(
     respx.get(ME_URL).respond(500)
 
     assert login_status(profile="default") == {"status": "signed_in"}
+
+
+@respx.mock
+def test_signed_in_reports_scopes_the_token_carries_but_we_never_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Entra hands back every scope already consented for the app, so
+    a `false` flag cannot narrow an existing grant. The gap is only
+    dangerous while it is invisible."""
+    scp = "Mail.Read Mail.ReadWrite Mail.Send User.Read openid"
+    token = _jwt_token("anna@xmv.de", scp=scp)
+    monkeypatch.setenv("OUTLOOK_ALLOW_DRAFTS", "true")
+    monkeypatch.setenv("OUTLOOK_ALLOW_SEND", "false")
+    _patched_get_token(monkeypatch, _MemStore(token=token))
+    respx.get(ME_URL).respond(json={"userPrincipalName": "anna@xmv.de"})
+
+    result = login_status(profile="default")
+
+    assert result["status"] == "signed_in"
+    assert result["granted_scopes_not_requested"] == ["Mail.Send"]
+    assert "OUTLOOK_CLIENT_ID" in result["granted_scopes_note"]
+
+
+@respx.mock
+def test_no_scope_note_when_the_token_matches_the_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patched_get_token(monkeypatch, _MemStore(token=_fresh_token()))
+    respx.get(ME_URL).respond(json={"userPrincipalName": "anna@xmv.de"})
+
+    result = login_status(profile="default")
+
+    assert "granted_scopes_not_requested" not in result

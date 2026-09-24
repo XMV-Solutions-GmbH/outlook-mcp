@@ -35,6 +35,8 @@ import httpx
 from mcp_microsoft_graph_auth import public_view
 
 from outlook_mcp.auth import AuthRequiredError, get_token
+from outlook_mcp.auth.flow import resolve_scopes
+from outlook_mcp.auth.granted import excess_scopes
 from outlook_mcp.login_state import get_login_session_registry
 from outlook_mcp.tools._identity import resolve_upn
 
@@ -68,13 +70,11 @@ def login_status(
         token = None
 
     if token is not None:
+        result: dict[str, Any] = {"status": "signed_in"}
         upn = resolve_upn(profile=profile, token=token, http=http)
-        if upn is None:
-            return {"status": "signed_in"}
-        return {
-            "status": "signed_in",
-            "signed_in_user_upn": upn,
-        }
+        if upn is not None:
+            result["signed_in_user_upn"] = upn
+        return _with_scope_note(result, token)
 
     # 2. No token. Check the in-process LoginSessionRegistry.
     registry = get_login_session_registry()
@@ -111,6 +111,33 @@ def login_status(
         "previous_session_status": session.status,
         "error": error,
     }
+
+
+def _with_scope_note(result: dict[str, Any], token: str) -> dict[str, Any]:
+    """Annotate a `signed_in` result with any scopes the token carries
+    that this server never asked for.
+
+    Entra issues every scope already consented for the app
+    registration, so an opt-in flag set to `false` narrows the consent
+    prompt and the tool surface but cannot narrow an existing grant.
+    Reporting the gap is the difference between an operator knowing
+    their token is broader than their config and assuming it isn't.
+    Silent when there is nothing to report.
+    """
+    excess = excess_scopes(token, resolve_scopes())
+    if not excess:
+        return result
+    result["granted_scopes_not_requested"] = list(excess)
+    result["granted_scopes_note"] = (
+        "The signed-in token carries scopes this server did not request. "
+        "Microsoft Entra returns every scope already consented for the app "
+        "registration, so an opt-in flag set to false narrows the consent "
+        "prompt and this server's tool surface, but cannot narrow an "
+        "already-consented token. To actually withhold them, revoke the "
+        "app's consent and sign in again, or point OUTLOOK_CLIENT_ID at a "
+        "dedicated app registration."
+    )
+    return result
 
 
 def _default_error_message(status: str) -> str:
