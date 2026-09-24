@@ -102,21 +102,36 @@ successful run and updates `OUTLOOK_HARNESS_TOKEN_JSON`. Rejected:
    credential that can rewrite repository secrets — a standing, high-value
    target living permanently in the repo, to protect a test credential. The
    risk is strictly worse than the problem.
-2. **The benefit is speculative.** Entra rotates the refresh token on
-   redemption, but the previous token remains valid — verified directly: a
-   stored refresh token was redeemed, the rotated replacement discarded, and
-   the *original* redeemed again successfully. Entra tracks the inactivity
-   window against the grant, so redeeming the stored copy weekly is what
-   resets the clock, and the stored copy is exactly what the scheduled run
-   redeems.
+2. **The benefit is speculative, and the premise it would protect against is
+   now known to be false.** Entra rotates the refresh token on redemption, but
+   the previous token remains valid — verified directly: a stored refresh
+   token was redeemed, the rotated replacement discarded, and the *original*
+   redeemed again successfully. Entra tracks the inactivity window against the
+   grant, so redeeming the stored copy is what resets the clock, and the
+   stored copy is exactly what the scheduled run redeems.
+
+   This is not only inference from a single experiment. The second harness
+   credential, `OUTLOOK_HARNESS_PERSONAL_TOKEN_JSON`, was issued on
+   2026-05-23 and has never been rewritten — and on 2026-09-24, four months
+   later, it was still alive. It survived because every CI run restores it
+   and `tests/harness/test_personal_account.py` redeems it; pytest keeps
+   running after failures, so it kept being redeemed on every push even
+   through the seven weeks when the work/school half of the same job was
+   failing and nobody was looking at it.
+
+   That is the write-back hypothesis tested by accident, over four months,
+   on a real credential: the *stored* copy was redeemed repeatedly without
+   ever being updated, and its inactivity clock reset every time. Write-back
+   would have changed nothing about that outcome.
 3. **It does not rescue the failure case anyway.** Once a credential is dead —
    expired, revoked, or its mailbox deleted — write-back cannot help; a human
    has to sign in again. Write-back only ever helps in the window where
    scheduling already helps.
 
 **Revisit if** a scheduled run ever fails with `AADSTS700082` despite the
-weekly cadence. That would falsify point 2, and the trade-off in point 1 would
-deserve a second look.
+weekly cadence. That would falsify point 2 — against four months of contrary
+evidence, so look hard at the run history first — and the trade-off in point 1
+would then deserve a second look.
 
 ## Failing loudly
 
