@@ -21,8 +21,13 @@ failures and ten misleading skips, which reads as flakiness.
 Checking once, up front, collapses that into a single message naming
 the credential and how to replace it.
 
+Checks every profile the workflow actually restored, named in
+`HARNESS_PROFILES`, rather than one hardcoded profile. The harness has
+two — work/school and personal — and covering only the first left the
+second free to die the same quiet death.
+
 Deliberately account-agnostic: it never names a mailbox, so whichever
-identity ends up behind `OUTLOOK_HARNESS_TOKEN_JSON` it keeps working.
+identities end up behind the harness secrets it keeps working.
 """
 
 from __future__ import annotations
@@ -46,7 +51,11 @@ os.environ.setdefault("OUTLOOK_TOKEN_STORE", "file")
 from outlook_mcp.auth import AuthRequiredError, get_token
 from outlook_mcp.auth.store import PlainFileTokenStore
 
-HARNESS_PROFILE = "harness"
+# Comma-separated profile names, set by the workflow from the secrets
+# it actually restored. Defaulting to the work/school profile keeps a
+# bare local `python scripts/harness_preflight.py` useful.
+PROFILES_ENV = "HARNESS_PROFILES"
+DEFAULT_PROFILES = ("harness",)
 
 _RENEWAL_HINT = (
     "The harness credential could not obtain an access token. This is a "
@@ -55,43 +64,65 @@ _RENEWAL_HINT = (
     "Microsoft Entra expires a refresh token after 90 days of inactivity, so "
     "a credential that is never redeemed dies on its own; the scheduled run "
     "exists to prevent exactly that.\n"
-    "To fix: sign in again for the harness identity, then update the "
-    "OUTLOOK_HARNESS_TOKEN_JSON repository secret with the new "
-    "base64-encoded token.json. See scripts/renew-harness-token.sh."
+    "To fix: sign in again for that harness identity, then update the "
+    "matching repository secret with the new base64-encoded token.json. "
+    "See scripts/renew-harness-token.sh."
 )
 
 
-def main() -> int:
-    """Return 0 if the harness credential still works, 1 otherwise."""
+def _profiles() -> tuple[str, ...]:
+    """Profiles to check, from `HARNESS_PROFILES`."""
+    raw = os.environ.get(PROFILES_ENV, "")
+    named = tuple(part.strip() for part in raw.split(",") if part.strip())
+    return named or DEFAULT_PROFILES
+
+
+def _check(profile: str) -> bool:
+    """True if `profile` can still obtain an access token."""
     try:
-        token = get_token(profile=HARNESS_PROFILE, store=PlainFileTokenStore())
+        token = get_token(profile=profile, store=PlainFileTokenStore())
     except AuthRequiredError as exc:
         # ::error:: renders as an annotation on the run summary, so the
         # cause is visible without opening the log.
-        print(f"::error title=Harness credential unusable::{exc}", file=sys.stderr)
-        print(_RENEWAL_HINT, file=sys.stderr)
-        return 1
+        print(f"::error title=Harness credential unusable ({profile})::{exc}", file=sys.stderr)
+        return False
     except Exception as exc:
         # Anything else — a malformed cache file, a network failure, a
         # misconfiguration — still has to arrive as one readable line
         # rather than a traceback that looks like a code defect.
         print(
-            f"::error title=Harness credential could not be checked::{exc!r}",
+            f"::error title=Harness credential could not be checked ({profile})::{exc!r}",
             file=sys.stderr,
         )
-        print(_RENEWAL_HINT, file=sys.stderr)
-        return 1
+        return False
 
     if not token:
         print(
-            "::error title=Harness credential unusable::"
+            f"::error title=Harness credential unusable ({profile})::"
             "the auth pipeline returned an empty access token",
             file=sys.stderr,
         )
-        print(_RENEWAL_HINT, file=sys.stderr)
-        return 1
+        return False
 
-    print("Harness credential is alive; the access token was obtained successfully.")
+    print(f"Harness credential for profile {profile!r} is alive.")
+    return True
+
+
+def main() -> int:
+    """Return 0 if every configured harness credential works, 1 otherwise.
+
+    Checks all of them before reporting, rather than stopping at the
+    first failure: if both credentials have expired, one run should
+    say so once, not send somebody round the loop twice.
+    """
+    profiles = _profiles()
+    failed = [profile for profile in profiles if not _check(profile)]
+    if failed:
+        print(
+            f"Unusable harness credential(s): {', '.join(failed)}.\n{_RENEWAL_HINT}",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

@@ -105,6 +105,15 @@ distinction it draws:
 | Secret present, credential works | silent, tests run |
 | Secret present, credential dead | **job fails** with one `::error::` |
 
+Both harness credentials are covered, not just the work/school one.
+The workflow names the profiles it actually restored in
+`HARNESS_PROFILES` and the preflight checks each, reporting all
+failures in one run rather than stopping at the first — two dead
+credentials should cost one trip round the loop, not two. Driving it
+off the restored secrets rather than a hardcoded list means a third
+harness identity, if one is ever added, is covered by wiring the
+restore step alone.
+
 ## The limit of this fix
 
 GitHub **automatically disables scheduled workflows in a public repository

@@ -120,3 +120,46 @@ def test_nothing_between_the_trigger_and_the_harness_job_excludes_a_scheduled_ru
         )
         pending.extend(needs_of(name))
     assert seen, "harness job has no dependencies — expected it to need the test job"
+
+
+# ---------------------------------------------------------------------
+# The preflight must cover every credential the workflow restored
+# ---------------------------------------------------------------------
+
+
+def _harness_steps(ci: dict[Any, Any]) -> list[dict[str, Any]]:
+    return list(ci["jobs"]["harness"]["steps"])
+
+
+def _preflight_step(ci: dict[Any, Any]) -> dict[str, Any]:
+    for step in _harness_steps(ci):
+        if "harness_preflight.py" in str(step.get("run", "")):
+            return step
+    pytest.fail("no step runs the harness preflight")
+
+
+def test_every_restored_credential_is_named_to_the_preflight(ci: dict[Any, Any]) -> None:
+    """The harness has two credentials and both expire by the same
+    90-day rule. A preflight that checks one leaves the other free to
+    die the same quiet death it was written to prevent."""
+    profiles = str(_preflight_step(ci)["env"]["HARNESS_PROFILES"])
+    assert "harness" in profiles
+    assert "harness-personal" in profiles
+
+
+def test_the_preflight_runs_whenever_any_credential_was_restored(ci: dict[Any, Any]) -> None:
+    condition = str(_preflight_step(ci)["if"])
+    assert "restore_work" in condition
+    assert "restore_personal" in condition
+    assert "||" in condition, "an `&&` would skip the check whenever only one secret is set"
+
+
+def test_the_preflight_runs_before_the_harness_tests(ci: dict[Any, Any]) -> None:
+    """Checking after the suite would be pointless: the first failing
+    test deletes the cache entry and the rest skip themselves."""
+    steps = _harness_steps(ci)
+    preflight = next(
+        i for i, s in enumerate(steps) if "harness_preflight.py" in str(s.get("run", ""))
+    )
+    suite = next(i for i, s in enumerate(steps) if "run_tests.sh harness" in str(s.get("run", "")))
+    assert preflight < suite
