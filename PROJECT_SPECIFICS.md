@@ -95,7 +95,8 @@ Three layers (see `docs/testconcept.md` and `tests/run_tests.sh`):
 
 - **unit** — pure logic, no I/O.
 - **integration** — Microsoft Graph calls mocked with `respx`; exercises the tool handlers without a live tenant.
-- **harness** — runs against a **real Microsoft 365 sandbox tenant**, gated behind a harness-profile login (`./tests/run_tests.sh harness`). A dedicated test mailbox is required; credentials live in GitHub Actions secrets for CI and in a developer-local git-ignored `.env` for iterative work. Document the tenant/mailbox in `docs/testconcept.md` once provisioned.
+- **harness** — runs against a **real Microsoft 365 mailbox**, gated behind a harness-profile login *and* an explicit opt-in (`OUTLOOK_HARNESS_I_KNOW_THIS_HITS_A_REAL_MAILBOX=true ./tests/run_tests.sh harness`). Without the opt-in every harness test skips, loudly: the layer creates and permanently deletes messages, `./tests/run_tests.sh all` says nothing about that, and any machine holding a harness token cache would otherwise reach the mailbox from an ordinary test command. CI sets the variable in the harness job and nowhere else. Credentials live in GitHub Actions secrets for CI and in a developer-local git-ignored `.env` for iterative work.
+- The harness additionally **cannot delete a message it did not create** — proven by a ledger of seeded ids or by the `[outlook-mcp-harness …]` subject marker, with a unit-layer source scan keeping every deletion primitive inside `tests/harness/_guard.py`. This matters because the mailbox behind the credential is a real one, not a disposable test account.
 
 ### MCP-install test: a fresh sub-agent driving only the tool suite
 

@@ -28,6 +28,8 @@ from typing import Any
 import pytest
 import yaml
 
+from tests.harness.conftest import HARNESS_OPT_IN_ENV
+
 WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
 
 
@@ -163,3 +165,37 @@ def test_the_preflight_runs_before_the_harness_tests(ci: dict[Any, Any]) -> None
     )
     suite = next(i for i, s in enumerate(steps) if "run_tests.sh harness" in str(s.get("run", "")))
     assert preflight < suite
+
+
+# ---------------------------------------------------------------------
+# The harness layer's explicit opt-in
+# ---------------------------------------------------------------------
+
+
+def _harness_suite_step(ci: dict[Any, Any]) -> dict[str, Any]:
+    for step in _harness_steps(ci):
+        if "run_tests.sh harness" in str(step.get("run", "")):
+            return step
+    pytest.fail("no step runs the harness test layer")
+
+
+def test_ci_grants_the_harness_opt_in(ci: dict[Any, Any]) -> None:
+    """Without it the harness layer skips itself, and CI would report
+    green while verifying nothing against the real system."""
+    env = _harness_suite_step(ci)["env"]
+    assert env[HARNESS_OPT_IN_ENV] == "true"
+
+
+def test_nothing_else_in_ci_grants_the_harness_opt_in(ci: dict[Any, Any]) -> None:
+    """The opt-in belongs to exactly one step. Hoisting it to the job,
+    or setting it workflow-wide, would re-open the hole it closes: the
+    `test` job runs `run_tests.sh` too."""
+    granting: list[str] = []
+    for job_name, job in ci["jobs"].items():
+        if HARNESS_OPT_IN_ENV in (job.get("env") or {}):
+            granting.append(f"job:{job_name}")
+        for step in job.get("steps", []):
+            if HARNESS_OPT_IN_ENV in (step.get("env") or {}):
+                granting.append(f"{job_name}:{step.get('name', '?')}")
+    assert granting == ["harness:Run harness tests against real Microsoft 365"]
+    assert HARNESS_OPT_IN_ENV not in (ci.get("env") or {})

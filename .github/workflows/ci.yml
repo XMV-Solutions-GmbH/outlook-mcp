@@ -170,4 +170,10 @@ jobs:
         env:
           # Use plain-file backend explicitly (CI runners have no keyring).
           OUTLOOK_TOKEN_STORE: file
+          # The harness layer creates and permanently deletes messages in a
+          # live mailbox, so it refuses to run without an explicit opt-in.
+          # Set HERE and nowhere else: a laptop or workspace that happens to
+          # hold a harness token cache must not reach a real mailbox from an
+          # ordinary `./tests/run_tests.sh all`. See tests/harness/conftest.py.
+          OUTLOOK_HARNESS_I_KNOW_THIS_HITS_A_REAL_MAILBOX: "true"
         run: ./tests/run_tests.sh harness
