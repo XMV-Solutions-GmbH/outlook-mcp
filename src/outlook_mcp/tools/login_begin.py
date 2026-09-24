@@ -33,10 +33,11 @@ is started exactly once per session.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from mcp_microsoft_graph_auth import LoginSession, public_view
@@ -53,8 +54,8 @@ from outlook_mcp.auth.flow import (
     request_device_code,
 )
 from outlook_mcp.auth.store import get_token_store
-from outlook_mcp.login_state import cache_upn, get_login_session_registry
-from outlook_mcp.tools._common import GRAPH_BASE, auth_headers
+from outlook_mcp.login_state import get_login_session_registry, invalidate_upn
+from outlook_mcp.tools._identity import resolve_upn
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import Context
@@ -192,6 +193,11 @@ async def _poll_and_finalize(
 
     Mutates `session.status`, `session.error`, `session.signed_in_user_upn`
     in place. Persists the token via the configured TokenStore.
+
+    Any identity remembered for this profile is dropped before the new
+    one is derived: a sign-in as a different user must not be able to
+    read back the previous user's name, and neither must a sign-in
+    whose identity lookup fails (issue #83).
     """
     try:
         cached = await asyncio.to_thread(
@@ -232,31 +238,14 @@ async def _poll_and_finalize(
         _log.exception("ol_login_begin token persist failed for profile %r", session.profile)
         return
 
-    upn = await asyncio.to_thread(_fetch_upn, cached.access_token, http)
-    if upn is not None:
-        cache_upn(session.profile, upn)
+    invalidate_upn(session.profile)
+    upn = await asyncio.to_thread(
+        functools.partial(
+            resolve_upn,
+            profile=session.profile,
+            token=cached.access_token,
+            http=http,
+        )
+    )
     session.signed_in_user_upn = upn
     session.status = "success"
-
-
-def _fetch_upn(token: str, http: httpx.Client | None) -> str | None:
-    """One sync /me?$select=userPrincipalName round-trip. Defensive
-    against wire-format quirks — same shape as login_status._fetch_upn."""
-    client = http if http is not None else httpx.Client(timeout=15.0)
-    try:
-        response = client.get(
-            f"{GRAPH_BASE}/me",
-            headers=auth_headers(token),
-            params={"$select": "userPrincipalName"},
-        )
-        response.raise_for_status()
-        payload = response.json()
-        if not isinstance(payload, dict):
-            return None
-        upn = payload.get("userPrincipalName")
-        return cast("str | None", upn) if isinstance(upn, str) else None
-    except (httpx.HTTPError, ValueError):
-        return None
-    finally:
-        if http is None:
-            client.close()

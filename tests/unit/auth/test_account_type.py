@@ -17,16 +17,19 @@ from outlook_mcp.auth.account_type import (
     signed_in_account_type,
 )
 
+_HEADER = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).rstrip(b"=").decode()
+
 
 def _jwt(claims: dict[str, object]) -> str:
     """Build a syntactically-valid 3-segment JWT with the given claims.
 
     Signature is junk — the decoder doesn't verify (caller already trusts
-    the token; we just read claims).
+    the token; we just read claims). The header is real, though: the
+    decoder reads the whole token, so a token with a junk header is not
+    a JWT and is rejected as such.
     """
-    header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).rstrip(b"=").decode()
     payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
-    return f"{header}.{payload}.sig"
+    return f"{_HEADER}.{payload}.sig"
 
 
 # ── _decode_jwt_claims ───────────────────────────────────────────────────
@@ -46,7 +49,8 @@ def test_decode_handles_missing_padding() -> None:
     claims = {"a": 1}
     payload_bytes = json.dumps(claims).encode()
     payload_b64 = base64.urlsafe_b64encode(payload_bytes).rstrip(b"=").decode()
-    token = f"hdr.{payload_b64}.sig"
+    assert payload_b64.endswith("0"), "payload chosen so its base64 needs padding"
+    token = f"{_HEADER}.{payload_b64}.sig"
     assert _decode_jwt_claims(token) == claims
 
 
@@ -59,6 +63,8 @@ def test_decode_handles_missing_padding() -> None:
         "four.parts.in.token",
         "header.@@@invalid_base64@@@.sig",
         "header.bm90LWpzb24=.sig",  # base64 of "not-json" — not valid JSON
+        # A junk header is not a JWT either, even with a readable payload.
+        "hdr.eyJ0aWQiOiAiYWJjIn0.sig",
     ],
 )
 def test_decode_returns_empty_on_malformed(bad: str) -> None:
@@ -71,7 +77,7 @@ def test_decode_returns_empty_when_payload_is_not_an_object() -> None:
     """A JWT whose payload is a valid JSON array (not object) — we want
     `{}` so .get("tid") returns None, not a list-index crash."""
     payload_b64 = base64.urlsafe_b64encode(b"[1, 2, 3]").rstrip(b"=").decode()
-    token = f"hdr.{payload_b64}.sig"
+    token = f"{_HEADER}.{payload_b64}.sig"
     assert _decode_jwt_claims(token) == {}
 
 

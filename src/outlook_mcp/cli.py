@@ -125,8 +125,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "logout":
         from outlook_mcp.auth.store import get_token_store
+        from outlook_mcp.login_state import invalidate_upn
 
         get_token_store().delete(args.profile)
+        # Belt and braces: in this process there is no cached identity
+        # to clear (logout runs as its own CLI invocation), but an
+        # in-process caller of `main(["logout", ...])` must not be
+        # left reading the identity of an account it just signed out.
+        # A long-running MCP server in *another* process is protected
+        # by the token-bound cache in `login_state`, not by this call.
+        invalidate_upn(args.profile)
         return 0
 
     # No subcommand — start the MCP server on stdio.

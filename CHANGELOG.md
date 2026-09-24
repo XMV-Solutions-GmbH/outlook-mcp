@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Tracked in [GitHub Issues](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues).
 
+### Fixed
+
+- **`ol_login_status` no longer reports the account of a previous sign-in.** The per-profile UPN cache was keyed by profile name alone and written once at the first successful sign-in. `mcp-server-outlook logout` runs as its own CLI process, so it could never clear the cache of a long-running MCP server — and `invalidate_upn()` had no call site at all. A profile signed out and signed back in as a *different* user therefore kept reporting the first user indefinitely, while every data tool correctly used the new account. The reported identity is now derived from the access token actually in use: its `upn` / `unique_name` / `preferred_username` claim where the token is a JWT (work/school accounts — no round-trip needed), else a `/me` call made with that token. The cache entry is bound to the token it was derived from, so any change of token — re-login, refresh, a token another process wrote — misses instead of answering stale. Closes [#83](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues/83).
+
+### Changed
+
+- **One JWT reader, and the declared `pyjwt` dependency is now actually used.** `pyjwt[crypto]` was a declared runtime dependency that nothing imported, while `auth/account_type.py` hand-rolled its own base64 payload decoder. `auth/identity.decode_claims()` is now the single JWT-reading primitive in the package — PyJWT with `verify_signature=False`, since the token came from our own store and its claims authorise nothing — and `account_type` delegates to it. Behaviour on real Microsoft tokens is unchanged; a three-segment string with an unreadable *header* is now correctly treated as "not a JWT" rather than decoded for its payload alone, which only affects synthetic inputs.
+
+- **`ol_login_status` omits `signed_in_user_upn` when the identity cannot be derived from the live token**, instead of returning it as `null`. A wrong or unreadable identity misleads an agent about which mailbox it is addressing; absence is the honest answer. `status` is unaffected — an account whose UPN cannot be determined is still `signed_in`.
+
 ## [v0.10.0] — 2026-08-08
 
 ### Added

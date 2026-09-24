@@ -15,12 +15,17 @@ Pins the load-bearing properties:
 - `/me` is called at most once per profile-state-transition; the UPN
   cache is the second-call short-circuit.
 - Wire-format edge cases: `/me` 4xx, malformed payload, missing
-  userPrincipalName all degrade to `signed_in` without UPN rather
-  than crashing.
+  userPrincipalName all degrade to `signed_in` with the UPN field
+  omitted rather than crashing.
+- Issue #83: the reported UPN tracks the token in hand. A profile
+  that is now signed in as somebody else reports the new identity or
+  nothing at all — never the previous one.
 """
 
 from __future__ import annotations
 
+import base64
+import json
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -64,9 +69,26 @@ class _MemStore:
         self._d.pop(profile, None)
 
 
-def _fresh_token() -> CachedToken:
+def _fresh_token(access_token: str = "AT") -> CachedToken:
+    """An opaque (non-JWT) access token, so the identity lookup has to
+    go to /me — the personal-Microsoft-account shape."""
     return CachedToken(
-        access_token="AT",
+        access_token=access_token,
+        refresh_token="RT",
+        expires_at=time.time() + 3600,
+        scope="",
+    )
+
+
+def _jwt_token(upn: str) -> CachedToken:
+    """A work/school-shaped access token carrying its own `upn` claim."""
+
+    def seg(obj: dict[str, object]) -> str:
+        return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+
+    access = f"{seg({'alg': 'none'})}.{seg({'upn': upn})}.sig"
+    return CachedToken(
+        access_token=access,
         refresh_token="RT",
         expires_at=time.time() + 3600,
         scope="",
@@ -126,7 +148,7 @@ def test_signed_in_returns_signed_in_even_when_me_4xx(
     respx.get(ME_URL).respond(403, json={"error": {"code": "Forbidden"}})
 
     result = login_status(profile="default")
-    assert result == {"status": "signed_in", "signed_in_user_upn": None}
+    assert result == {"status": "signed_in"}
 
 
 @respx.mock
@@ -140,7 +162,7 @@ def test_signed_in_returns_signed_in_when_me_payload_missing_upn_field(
     respx.get(ME_URL).respond(json={"id": "abc-123"})  # no userPrincipalName key
 
     result = login_status(profile="default")
-    assert result == {"status": "signed_in", "signed_in_user_upn": None}
+    assert result == {"status": "signed_in"}
 
 
 @respx.mock
@@ -153,7 +175,7 @@ def test_signed_in_handles_me_returning_non_dict_payload(
     respx.get(ME_URL).respond(json=[])
 
     result = login_status(profile="default")
-    assert result == {"status": "signed_in", "signed_in_user_upn": None}
+    assert result == {"status": "signed_in"}
 
 
 @respx.mock
@@ -167,7 +189,7 @@ def test_signed_in_handles_me_returning_non_string_upn(
     respx.get(ME_URL).respond(json={"userPrincipalName": None})
 
     result = login_status(profile="default")
-    assert result == {"status": "signed_in", "signed_in_user_upn": None}
+    assert result == {"status": "signed_in"}
 
 
 def test_signed_in_uses_cached_upn_without_me_call(
@@ -177,7 +199,7 @@ def test_signed_in_uses_cached_upn_without_me_call(
     Useful path: ol_login_begin populated the cache, status calls
     short-circuit immediately."""
     _patched_get_token(monkeypatch, _MemStore(token=_fresh_token()))
-    cache_upn("default", "pre-cached@xmv.de")
+    cache_upn("default", "pre-cached@xmv.de", token="AT")
 
     with respx.mock(base_url="https://graph.microsoft.com") as router:
         result = login_status(profile="default")
@@ -360,3 +382,82 @@ def test_me_call_passes_select_query_param(
     route = respx.get(ME_URL).respond(json={"userPrincipalName": "x@x.de"})
     login_status(profile="default")
     assert "%24select=userPrincipalName" in str(route.calls.last.request.url)
+
+
+# ---------------------------------------------------------------------
+# Issue #83 — the reported identity follows the token, not the process
+# ---------------------------------------------------------------------
+
+
+@respx.mock
+def test_relogin_as_another_user_reports_the_new_upn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact reproduction from issue #83, inside one process:
+    sign in as A, log out, sign in as B, ask again. Before the fix the
+    third call still answered A."""
+    store = _MemStore(token=_fresh_token("AT-user-a"))
+    _patched_get_token(monkeypatch, store)
+    respx.get(ME_URL).respond(json={"userPrincipalName": "user-a@xmv.de"})
+
+    assert login_status(profile="default") == {
+        "status": "signed_in",
+        "signed_in_user_upn": "user-a@xmv.de",
+    }
+
+    # logout + re-login as a different user, same server process.
+    store.delete("default")
+    store.set("default", _fresh_token("AT-user-b").to_json().encode())
+    respx.get(ME_URL).respond(json={"userPrincipalName": "user-b@xmv.de"})
+
+    assert login_status(profile="default") == {
+        "status": "signed_in",
+        "signed_in_user_upn": "user-b@xmv.de",
+    }
+
+
+@respx.mock
+def test_upn_comes_from_the_token_claim_without_calling_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A work/school token names its own owner. No round-trip needed,
+    and nothing to go stale."""
+    _patched_get_token(monkeypatch, _MemStore(token=_jwt_token("bob@xmv.de")))
+    route = respx.get(ME_URL).respond(json={"userPrincipalName": "WRONG@xmv.de"})
+
+    result = login_status(profile="default")
+
+    assert result == {"status": "signed_in", "signed_in_user_upn": "bob@xmv.de"}
+    assert route.call_count == 0
+
+
+@respx.mock
+def test_unknown_identity_omits_the_field_rather_than_reporting_null(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`signed_in_user_upn` absent is the honest answer; a wrong one
+    (or a null the agent might misread) is worse than none."""
+    _patched_get_token(monkeypatch, _MemStore(token=_fresh_token()))
+    respx.get(ME_URL).respond(503)
+
+    result = login_status(profile="default")
+
+    assert result == {"status": "signed_in"}
+    assert "signed_in_user_upn" not in result
+
+
+@respx.mock
+def test_failed_identity_lookup_cannot_resurrect_a_previous_upn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After a successful lookup for user A, a re-login as B whose
+    lookup fails must report nothing — not fall back to A."""
+    store = _MemStore(token=_fresh_token("AT-user-a"))
+    _patched_get_token(monkeypatch, store)
+    respx.get(ME_URL).respond(json={"userPrincipalName": "user-a@xmv.de"})
+    login_status(profile="default")
+
+    store.set("default", _fresh_token("AT-user-b").to_json().encode())
+    respx.get(ME_URL).respond(500)
+
+    assert login_status(profile="default") == {"status": "signed_in"}

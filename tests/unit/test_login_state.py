@@ -69,37 +69,55 @@ def test_get_login_session_registry_returns_same_instance() -> None:
 
 def test_cached_upn_returns_none_when_not_yet_cached() -> None:
     reset_for_tests()
-    assert cached_upn("default") is None
+    assert cached_upn("default", token="AT") is None
 
 
 def test_cache_then_read_roundtrip() -> None:
     reset_for_tests()
-    cache_upn("default", "anna@xmv.de")
-    assert cached_upn("default") == "anna@xmv.de"
+    cache_upn("default", "anna@xmv.de", token="AT")
+    assert cached_upn("default", token="AT") == "anna@xmv.de"
 
 
 def test_cache_overwrites_existing_entry() -> None:
     reset_for_tests()
-    cache_upn("default", "old@xmv.de")
-    cache_upn("default", "new@xmv.de")
-    assert cached_upn("default") == "new@xmv.de"
+    cache_upn("default", "old@xmv.de", token="AT")
+    cache_upn("default", "new@xmv.de", token="AT")
+    assert cached_upn("default", token="AT") == "new@xmv.de"
 
 
 def test_cache_isolates_per_profile() -> None:
     reset_for_tests()
-    cache_upn("acme", "alice@acme.com")
-    cache_upn("globex", "bob@globex.com")
-    assert cached_upn("acme") == "alice@acme.com"
-    assert cached_upn("globex") == "bob@globex.com"
+    cache_upn("acme", "alice@acme.com", token="AT-acme")
+    cache_upn("globex", "bob@globex.com", token="AT-globex")
+    assert cached_upn("acme", token="AT-acme") == "alice@acme.com"
+    assert cached_upn("globex", token="AT-globex") == "bob@globex.com"
     # Unrelated profile stays None
-    assert cached_upn("nope") is None
+    assert cached_upn("nope", token="AT-acme") is None
 
 
 def test_invalidate_drops_entry() -> None:
     reset_for_tests()
-    cache_upn("default", "anna@xmv.de")
+    cache_upn("default", "anna@xmv.de", token="AT")
     invalidate_upn("default")
-    assert cached_upn("default") is None
+    assert cached_upn("default", token="AT") is None
+
+
+def test_lookup_with_a_different_token_misses(  # issue #83
+) -> None:
+    """The regression that cost real damage: the profile is signed in
+    as somebody else now, so the entry written for the previous token
+    must be unreadable — not merely stale-but-returned."""
+    reset_for_tests()
+    cache_upn("default", "user-a@xmv.de", token="AT-user-a")
+    assert cached_upn("default", token="AT-user-b") is None
+
+
+def test_cache_rebinds_to_the_new_token() -> None:
+    reset_for_tests()
+    cache_upn("default", "user-a@xmv.de", token="AT-user-a")
+    cache_upn("default", "user-b@xmv.de", token="AT-user-b")
+    assert cached_upn("default", token="AT-user-b") == "user-b@xmv.de"
+    assert cached_upn("default", token="AT-user-a") is None
 
 
 def test_invalidate_unknown_profile_is_noop() -> None:
@@ -115,12 +133,12 @@ def test_invalidate_unknown_profile_is_noop() -> None:
 
 def test_reset_clears_registry_and_upn_cache() -> None:
     """The fixture's contract: every test starts clean."""
-    cache_upn("default", "x@x.de")
+    cache_upn("default", "x@x.de", token="AT")
     get_login_session_registry().put(_session("default"))
 
     reset_for_tests()
 
-    assert cached_upn("default") is None
+    assert cached_upn("default", token="AT") is None
     assert get_login_session_registry().get("default") is None
 
 
@@ -145,31 +163,34 @@ def test_concurrent_upn_writes_are_safe() -> None:
     write-write race loses an update."""
     reset_for_tests()
     profiles = [f"p{i}" for i in range(50)]
-    threads = [threading.Thread(target=cache_upn, args=(p, f"{p}@x.de")) for p in profiles]
+    threads = [
+        threading.Thread(target=cache_upn, args=(p, f"{p}@x.de"), kwargs={"token": f"AT-{p}"})
+        for p in profiles
+    ]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
 
     for p in profiles:
-        assert cached_upn(p) == f"{p}@x.de", f"lost write for {p}"
+        assert cached_upn(p, token=f"AT-{p}") == f"{p}@x.de", f"lost write for {p}"
 
 
 def test_concurrent_reads_during_writes_do_not_crash() -> None:
     """Defensive sanity: a reader thread spinning on cached_upn while
     other threads write must not see torn state or raise."""
     reset_for_tests()
-    cache_upn("p", "initial@x.de")
+    cache_upn("p", "initial@x.de", token="AT")
     stop = threading.Event()
     seen: list[str | None] = []
 
     def reader() -> None:
         while not stop.is_set():
-            seen.append(cached_upn("p"))
+            seen.append(cached_upn("p", token="AT"))
 
     def writer() -> None:
         for i in range(200):
-            cache_upn("p", f"v{i}@x.de")
+            cache_upn("p", f"v{i}@x.de", token="AT")
 
     r = threading.Thread(target=reader)
     w = threading.Thread(target=writer)
