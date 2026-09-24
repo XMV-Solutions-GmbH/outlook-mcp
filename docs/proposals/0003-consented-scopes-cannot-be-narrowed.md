@@ -6,10 +6,9 @@ SPDX-FileContributor: David Koller <david.koller@xmv.de>
 
 # 0003 — The opt-in flags cannot narrow an already-consented token
 
-- **Status:** Draft — the README wording in § "Decision required" is a product
-  decision and is **not** yet made. The detection and the regression tests
-  landed independently; nothing here blocks them.
-- **Date:** 2026-09-23
+- **Status:** Accepted — option 1 (reword the promise), decided 2026-09-24.
+  Option 2 stays available as a later stage; see § "What was decided".
+- **Date:** 2026-09-23 (decided 2026-09-24)
 
 ## Context
 
@@ -94,7 +93,21 @@ The never-auto-send rule itself is untouched: the tool is absent, and the
 what the agent can do. What is affected is the *audit* claim — the sentence an
 admin or auditor reads and takes at face value.
 
-## Decision required
+## What was decided
+
+**Option 1 — reword the promise — was chosen on 2026-09-24.** The README now
+states plainly that the flags govern what this server requests and exposes, not
+the scope of a consent already granted, and documents the two remedies that act
+on the grant itself.
+
+**Option 2 remains available as a later stage** and is explicitly not being done
+now. If an auditor ever needs the literal claim "this credential cannot send
+mail", separate app registrations per flag combination is the way to get it, and
+nothing in option 1 forecloses that — the wording describes the boundary
+honestly, so tightening the boundary later only makes an accurate statement more
+generous.
+
+## The options that were weighed
 
 Three options, not mutually exclusive:
 
@@ -112,10 +125,11 @@ Three options, not mutually exclusive:
    is exactly what Entra ignores here; it does not solve the problem on its own,
    it only keeps a *fresh* registration clean.
 
-**Recommendation: (1) now, (2) if an auditor ever needs the literal claim.**
+**Recommendation, as filed: (1) now, (2) if an auditor ever needs the literal
+claim.** Accepted as recommended.
 
-Drafted wording for (1), for review — the headline sentence gains four words
-and a pointer:
+The wording that shipped — the headline sentence gains the tool-surface
+guarantee, the "first sign-in" qualifier and a pointer:
 
 > **The default install does not request `Mail.Send`** — at a *first* sign-in
 > the consent prompt does NOT include "this app can send mail as you", which is
@@ -124,14 +138,15 @@ and a pointer:
 > consented to a scope, Microsoft Entra puts it on every later token for that
 > app registration whether or not it was requested.
 
-plus a new section stating the four rows of the table above, and the recovery
-path: revoke the application's consent in Entra (Enterprise applications →
-mcp-server-outlook → Permissions) and sign in again, or point
-`OUTLOOK_CLIENT_ID` at a dedicated app registration.
+plus a new README section, *What the flags do and do not control*, stating the
+four rows of the table above and the two recovery paths: revoke the
+application's consent in Entra (Enterprise applications → mcp-server-outlook →
+Permissions) and sign in again, or point `OUTLOOK_CLIENT_ID` at an app
+registration whose permission list contains only what you want.
 
-## What shipped regardless of the decision
+## What shipped ahead of the decision
 
-Neither of these presumes an answer:
+Neither of these presumed an answer, so both landed first:
 
 - `auth/granted.py` reads the issued `scp` and reports what exceeds the
   request. `ol_login_status` surfaces it as `granted_scopes_not_requested` with
@@ -146,6 +161,11 @@ Neither of these presumes an answer:
 - Do not read a wide `scp` claim as a gating bug. Check
   `test_requested_scopes_on_the_wire.py` first — it asserts what was *asked
   for*, which is the only part this codebase decides.
+- The never-auto-send rule does not rest on the scope request and never did. It
+  rests on `ol_email_send_draft` not being registered. Keep those two arguments
+  separate when explaining the compliance posture, or the weaker one
+  (the scope request, which Entra can widen) ends up carrying the stronger
+  one's weight.
 - Revoking consent in Entra is the only way to shrink an existing grant.
   Removing a scope from `resolve_scopes()` does not do it.
 - If the bundled app registration ever gains a new permission, every existing

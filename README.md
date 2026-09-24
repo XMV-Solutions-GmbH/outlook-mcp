@@ -36,7 +36,30 @@ Concretely, the agent gets these tools:
 | *(v0.2)* `ol_email_create_draft`, `ol_email_update_draft` | creates drafts in your Drafts folder | a draft appears — **you** review and click Send |
 | *(v0.2)* `ol_calendar_create_event_draft` | creates a tentative event with `responseRequested=False` | a draft event sits on your calendar — **you** send invites |
 
-Every action is attributed to the human who signed in once via Microsoft's standard Device Code login. No service-account "robot" identity. **The default install does not request `Mail.Send`** — the consent prompt does NOT include "this app can send mail as you", which is the line tenant admins (and your auditor) actually care about. Sending is opt-in via `OUTLOOK_ALLOW_SEND=true` (v0.3+) — see [Sending: opt-in](#sending-opt-in-via-outlook_allow_send) — and even when enabled, the agent never auto-sends; the human reviews each draft before any send tool call.
+Every action is attributed to the human who signed in once via Microsoft's standard Device Code login. No service-account "robot" identity. **The default install does not request `Mail.Send`**, and registers no tool that could send: there is no `ol_email_send_draft` to call. At a *first* sign-in the consent prompt does not include "this app can send mail as you", which is the line tenant admins (and your auditor) actually care about. Sending is opt-in via `OUTLOOK_ALLOW_SEND=true` (v0.3+) — see [Sending: opt-in](#sending-opt-in-via-outlook_allow_send) — and even when enabled, the agent never auto-sends; the human reviews each draft before any send tool call.
+
+One boundary to be precise about, because it is easy to assume otherwise: these flags govern **what this server asks for and what it exposes**, not the scope of a consent that has already been granted. See [What the flags do and do not control](#what-the-flags-do-and-do-not-control).
+
+### What the flags do and do not control
+
+`OUTLOOK_ALLOW_SEND`, `OUTLOOK_ALLOW_SHARED_MAILBOXES` and `OUTLOOK_ALLOW_GROUP_MAILBOXES` control three things, and there is a fourth they cannot.
+
+They **do** control:
+
+- **Which tools exist.** With `OUTLOOK_ALLOW_SEND=false` there is no `ol_email_send_draft` tool registered, so nothing — no agent, no prompt injection, no mistake — can send. This is the guarantee that holds unconditionally, and it is the one the never-auto-send rule actually rests on.
+- **Which scopes are requested.** The `scope` sent to Microsoft Identity, on the device-code request and on every token refresh, is the computed, gated list — never `.default`. Pinned by `tests/unit/auth/test_requested_scopes_on_the_wire.py`.
+- **What a first consent prompt shows.** A user or tenant that has not yet consented to this app sees only the requested scopes.
+
+They **cannot** control:
+
+- **What an already-consented token carries.** Microsoft Entra issues every scope recorded as consented for the app registration on that resource, regardless of the narrower set a request names. If any earlier sign-in — yours, a colleague's, or a tenant-wide admin consent — approved `Mail.Send`, then later tokens carry `Mail.Send` in their `scp` claim even with `OUTLOOK_ALLOW_SEND=false`. This is Entra behaviour; no OAuth client can opt out of it.
+
+So a wide `scp` claim on your token is not a bug in this server, and it does not mean the server can send: the tool is not there. What it does mean is that the *credential* is broader than your configuration.
+
+`ol_login_status` reports the gap when there is one, as `granted_scopes_not_requested`. To actually withhold a scope you have to act on the grant, not on the request:
+
+- **Revoke the application's consent** in Entra (Enterprise applications → mcp-server-outlook → Permissions), then sign in again. The next consent prompt covers only what the flags request.
+- **Or point `OUTLOOK_CLIENT_ID` at your own app registration** whose permission list contains only what you want. Nothing broader can then be consented to in the first place.
 
 ## Installation
 
