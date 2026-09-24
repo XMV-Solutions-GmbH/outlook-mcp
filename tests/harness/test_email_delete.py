@@ -38,7 +38,11 @@ import pytest
 from outlook_mcp.auth import get_token
 from outlook_mcp.auth.store import PlainFileTokenStore
 from outlook_mcp.tools._common import GRAPH_BASE, auth_headers, mailbox_path
-from outlook_mcp.tools.email_delete import delete_message
+from tests.harness._guard import (
+    assert_shared_mailbox_is_not_the_signed_in_one,
+    guarded_delete_message,
+    register_created,
+)
 
 HARNESS_PROFILE = "harness"
 SHARED_MAILBOX_ENV = "OUTLOOK_HARNESS_SHARED_MAILBOX_UPN"
@@ -96,7 +100,10 @@ def _create_throwaway_draft(
         },
     )
     response.raise_for_status()
-    return str(response.json()["id"]), marker
+    message_id = str(response.json()["id"])
+    # The ledger half of the ownership proof — see tests/harness/_guard.py.
+    register_created(message_id)
+    return message_id, marker
 
 
 def _find_in_folder(
@@ -205,7 +212,9 @@ def test_ol_email_delete_soft_on_me() -> None:
             initial = _find_in_folder(client, headers, "Drafts", draft_id)
             assert initial is not None, "seed draft not found in Drafts immediately after POST"
 
-            result = delete_message(draft_id, profile=HARNESS_PROFILE)
+            result = guarded_delete_message(
+                draft_id, client=client, headers=headers, profile=HARNESS_PROFILE
+            )
             assert result == {
                 "message_id": draft_id,
                 "mailbox": None,
@@ -221,7 +230,13 @@ def test_ol_email_delete_soft_on_me() -> None:
             # delete the id is stale (Graph rotates on move), so this
             # will likely 404 — our tool swallows that.
             try:
-                delete_message(draft_id, permanent=True, profile=HARNESS_PROFILE)
+                guarded_delete_message(
+                    draft_id,
+                    client=client,
+                    headers=headers,
+                    permanent=True,
+                    profile=HARNESS_PROFILE,
+                )
             except httpx.HTTPStatusError:
                 pass
 
@@ -246,7 +261,9 @@ def test_ol_email_delete_permanent_on_me() -> None:
     with httpx.Client(timeout=30.0) as client:
         draft_id, _marker = _create_throwaway_draft(client, headers)
         try:
-            result = delete_message(draft_id, permanent=True, profile=HARNESS_PROFILE)
+            result = guarded_delete_message(
+                draft_id, client=client, headers=headers, permanent=True, profile=HARNESS_PROFILE
+            )
             assert result["permanent"] is True
             assert result["message_id"] == draft_id
 
@@ -256,7 +273,13 @@ def test_ol_email_delete_permanent_on_me() -> None:
             # If permanentDelete somehow failed mid-test, the draft may
             # still be in Drafts. Make sure it's gone.
             try:
-                delete_message(draft_id, permanent=True, profile=HARNESS_PROFILE)
+                guarded_delete_message(
+                    draft_id,
+                    client=client,
+                    headers=headers,
+                    permanent=True,
+                    profile=HARNESS_PROFILE,
+                )
             except httpx.HTTPStatusError:
                 pass
 
@@ -282,11 +305,15 @@ def test_ol_email_delete_idempotent_on_me() -> None:
         draft_id, _marker = _create_throwaway_draft(client, headers)
 
         # First delete: succeeds, message gone.
-        delete_message(draft_id, permanent=True, profile=HARNESS_PROFILE)
+        guarded_delete_message(
+            draft_id, client=client, headers=headers, permanent=True, profile=HARNESS_PROFILE
+        )
 
         # Second delete on the same (now invalid) id: should also
         # report success. This is the load-bearing idempotency contract.
-        result = delete_message(draft_id, profile=HARNESS_PROFILE)
+        result = guarded_delete_message(
+            draft_id, client=client, headers=headers, profile=HARNESS_PROFILE
+        )
         assert result == {
             "message_id": draft_id,
             "mailbox": None,
@@ -300,10 +327,14 @@ def test_ol_email_delete_permanent_idempotent_on_me() -> None:
     headers = auth_headers(_token())
     with httpx.Client(timeout=30.0) as client:
         draft_id, _marker = _create_throwaway_draft(client, headers)
-        delete_message(draft_id, permanent=True, profile=HARNESS_PROFILE)
+        guarded_delete_message(
+            draft_id, client=client, headers=headers, permanent=True, profile=HARNESS_PROFILE
+        )
 
         # Re-issue: should succeed silently.
-        result = delete_message(draft_id, permanent=True, profile=HARNESS_PROFILE)
+        result = guarded_delete_message(
+            draft_id, client=client, headers=headers, permanent=True, profile=HARNESS_PROFILE
+        )
         assert result["permanent"] is True
 
 
@@ -320,6 +351,9 @@ def _shared_mailbox_or_skip() -> Iterator[str]:
     that doesn't belong in a clone-and-test loop.
     """
     upn = os.environ.get(SHARED_MAILBOX_ENV)
+    if upn:
+        # Refuse an obviously wrong target before creating anything.
+        assert_shared_mailbox_is_not_the_signed_in_one(_token(), upn)
     if not upn:
         pytest.skip(
             f"{SHARED_MAILBOX_ENV} not set — skipping shared-mailbox harness tests. "
@@ -356,8 +390,10 @@ def test_ol_email_delete_soft_on_shared_mailbox() -> None:
                 "the /users/{upn}/ routing actually went to /me/"
             )
 
-            result = delete_message(
+            result = guarded_delete_message(
                 draft_id,
+                client=client,
+                headers=headers,
                 mailbox=shared,
                 profile=HARNESS_PROFILE,
             )
@@ -373,8 +409,10 @@ def test_ol_email_delete_soft_on_shared_mailbox() -> None:
             )
         finally:
             try:
-                delete_message(
+                guarded_delete_message(
                     draft_id,
+                    client=client,
+                    headers=headers,
                     mailbox=shared,
                     permanent=True,
                     profile=HARNESS_PROFILE,
@@ -391,8 +429,10 @@ def test_ol_email_delete_permanent_on_shared_mailbox() -> None:
     with httpx.Client(timeout=30.0) as client:
         draft_id, _marker = _create_throwaway_draft(client, headers, mailbox=shared)
         try:
-            result = delete_message(
+            result = guarded_delete_message(
                 draft_id,
+                client=client,
+                headers=headers,
                 mailbox=shared,
                 permanent=True,
                 profile=HARNESS_PROFILE,
@@ -404,8 +444,10 @@ def test_ol_email_delete_permanent_on_shared_mailbox() -> None:
             assert _find_in_folder(client, headers, "Drafts", draft_id, mailbox=shared) is None
         finally:
             try:
-                delete_message(
+                guarded_delete_message(
                     draft_id,
+                    client=client,
+                    headers=headers,
                     mailbox=shared,
                     permanent=True,
                     profile=HARNESS_PROFILE,
