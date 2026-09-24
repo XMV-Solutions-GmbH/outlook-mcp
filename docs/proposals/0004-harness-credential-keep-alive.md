@@ -15,9 +15,41 @@ The `harness` job authenticates with a refresh token stored in the
 `OUTLOOK_HARNESS_TOKEN_JSON` repository secret. Microsoft Entra expires a
 refresh token after **90 days of inactivity**, and the job only ran on `push`
 and `pull_request` — so a long enough quiet period kills the credential
-without anybody touching the repo. That is exactly what happened: the token
-was issued 2026-05-08, never redeemed again, and CI went red on 2026-09-21
-with `AADSTS700082` (#89).
+without anybody touching the repo.
+
+### What actually happened, precisely
+
+Two independent failures, close together, and it matters which is which —
+this record was first written describing only the second.
+
+1. **The harness account was deleted from the tenant**, some time before
+   2026-08-03. CI failed from then on with `AADSTS500341` ("the user account
+   … has been deleted from the … directory"), filed as
+   [#75](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues/75).
+2. **The orphaned refresh token then reached its 90-day inactivity limit**
+   independently. It was issued 2026-05-08 and never redeemed again, so it
+   would have expired around 2026-08-06 whatever happened to the account.
+   By 2026-09-23 the error Entra returned had changed to `AADSTS700082`
+   ("expired due to inactivity"), which is what
+   [#89](https://github.com/XMV-Solutions-GmbH/outlook-mcp/issues/89) reported —
+   without knowing #75 already existed.
+
+**So the keep-alive would not have saved this particular credential.** No
+schedule can redeem a token belonging to a deleted account. What the schedule
+prevents is failure mode 2, which was real, was independently sufficient to
+kill the credential, and is the one that recurs — an account is deleted once
+and somebody notices; a token quietly ages out every ninety days for as long
+as the repo is quiet.
+
+The value of the schedule is therefore mostly in *detection*: a weekly run
+surfaces a credential that has died for any reason within a week, instead of
+letting it sit red until the next person happens to push. #75's own final
+acceptance criterion asked for exactly that — "decide whether an
+expiring/removed harness account should fail loudly earlier (e.g. a scheduled
+canary run) so this does not sit red for days".
+
+A decision record that is subtly wrong about its own trigger is worse than one
+that is silent, hence this correction.
 
 ## What was decided
 
@@ -141,3 +173,8 @@ as disabled, re-enable it and trigger one `workflow_dispatch` run.
 - The weekly run is what keeps the credential alive. Disabling the schedule,
   letting the harness job start skipping, or letting GitHub disable the
   schedule for inactivity, all re-arm the same 90-day fuse.
+- The schedule cannot rescue a credential whose *account* has gone — deleted,
+  disabled, password-reset, MFA re-registered. For those the weekly run is a
+  detector, not a preventer: it turns "red since some push three weeks ago"
+  into "red since last Monday", which is the difference between noticing and
+  not. Provisioning is always a human step.
