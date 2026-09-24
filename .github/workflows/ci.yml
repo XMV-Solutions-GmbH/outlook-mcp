@@ -131,6 +131,22 @@ jobs:
           echo "present=true" >> "$GITHUB_OUTPUT"
           echo "Work/school harness token cache restored ($(wc -c < ~/.cache/outlook-mcp/harness/token.json) bytes)."
 
+      - name: Restore harness-personal token cache from secret
+        id: restore_personal
+        env:
+          TOKEN_B64: ${{ secrets.OUTLOOK_HARNESS_PERSONAL_TOKEN_JSON }}
+        run: |
+          if [ -z "$TOKEN_B64" ]; then
+            echo "::notice::OUTLOOK_HARNESS_PERSONAL_TOKEN_JSON not set — personal-account harness tests will be skipped."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p ~/.cache/outlook-mcp/harness-personal
+          printf '%s' "$TOKEN_B64" | base64 -d > ~/.cache/outlook-mcp/harness-personal/token.json
+          chmod 600 ~/.cache/outlook-mcp/harness-personal/token.json
+          echo "present=true" >> "$GITHUB_OUTPUT"
+          echo "Personal harness token cache restored ($(wc -c < ~/.cache/outlook-mcp/harness-personal/token.json) bytes)."
+
       # A configured-but-dead credential must fail the job with ONE
       # legible message. Without this the first test to call get_token()
       # trips RefreshTokenInvalidError, which deletes the cache entry by
@@ -149,22 +165,6 @@ jobs:
           # so "harness," and ",harness-personal" are both fine.
           HARNESS_PROFILES: ${{ format('{0},{1}', steps.restore_work.outputs.present == 'true' && 'harness' || '', steps.restore_personal.outputs.present == 'true' && 'harness-personal' || '') }}
         run: uv run python scripts/harness_preflight.py
-
-      - name: Restore harness-personal token cache from secret
-        id: restore_personal
-        env:
-          TOKEN_B64: ${{ secrets.OUTLOOK_HARNESS_PERSONAL_TOKEN_JSON }}
-        run: |
-          if [ -z "$TOKEN_B64" ]; then
-            echo "::notice::OUTLOOK_HARNESS_PERSONAL_TOKEN_JSON not set — personal-account harness tests will be skipped."
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          mkdir -p ~/.cache/outlook-mcp/harness-personal
-          printf '%s' "$TOKEN_B64" | base64 -d > ~/.cache/outlook-mcp/harness-personal/token.json
-          chmod 600 ~/.cache/outlook-mcp/harness-personal/token.json
-          echo "present=true" >> "$GITHUB_OUTPUT"
-          echo "Personal harness token cache restored ($(wc -c < ~/.cache/outlook-mcp/harness-personal/token.json) bytes)."
 
       - name: Run harness tests against real Microsoft 365
         env:

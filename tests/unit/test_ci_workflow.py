@@ -199,3 +199,32 @@ def test_nothing_else_in_ci_grants_the_harness_opt_in(ci: dict[Any, Any]) -> Non
                 granting.append(f"{job_name}:{step.get('name', '?')}")
     assert granting == ["harness:Run harness tests against real Microsoft 365"]
     assert HARNESS_OPT_IN_ENV not in (ci.get("env") or {})
+
+
+def test_the_preflight_runs_after_every_credential_it_checks_is_restored(
+    ci: dict[Any, Any],
+) -> None:
+    """Ordering is load-bearing and its failure is silent.
+
+    `HARNESS_PROFILES` is built from `steps.<id>.outputs.present`, and
+    a step that has not run yet has no outputs — so a preflight placed
+    before a restore step reads an empty string for it and quietly
+    checks one credential fewer. That is what shipped: the preflight
+    sat between the two restores, `HARNESS_PROFILES` evaluated to
+    `"harness,"`, and the personal credential was never checked while
+    the job still reported green.
+    """
+    steps = _harness_steps(ci)
+    preflight = next(
+        i for i, s in enumerate(steps) if "harness_preflight.py" in str(s.get("run", ""))
+    )
+    restores = [
+        i
+        for i, s in enumerate(steps)
+        if "token cache restored" in str(s.get("run", "")) or "restore_" in str(s.get("id", ""))
+    ]
+    assert restores, "no restore steps found — the assertion would be vacuous"
+    assert all(r < preflight for r in restores), (
+        f"preflight at step {preflight} runs before restore step(s) "
+        f"{[r for r in restores if r > preflight]}; their outputs are empty at that point"
+    )
