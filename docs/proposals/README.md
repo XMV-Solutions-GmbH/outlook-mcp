@@ -40,3 +40,4 @@ Each record is `NNNN-short-slug.md` and captures at minimum:
 | [0001](0001-mcp-2x-server-api.md) | Migrate the server layer to the mcp 2.x `MCPServer` API | Implemented |
 | [0002](0002-group-mailboxes.md) | Read Microsoft 365 group mailboxes | Implemented |
 | [0003](0003-consented-scopes-cannot-be-narrowed.md) | The opt-in flags cannot narrow an already-consented token | Draft |
+| [0004](0004-harness-credential-keep-alive.md) | Keep the harness credential alive with a scheduled run | Implemented |

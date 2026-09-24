@@ -65,6 +65,10 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6",
     "mypy>=1.10",
+    # Parses .github/workflows/ci.yml in tests/unit/test_ci_workflow.py.
+    # Dev-only: the shipped package neither imports nor depends on it.
+    "pyyaml>=6",
+    "types-PyYAML>=6",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -6,6 +6,18 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Keep-alive for the harness credential (#89). Microsoft Entra expires
+  # a refresh token after 90 days of INACTIVITY, and the harness job
+  # otherwise only runs on push / pull_request — so a quiet fortnight,
+  # repeated, kills the credential without anyone touching the repo.
+  # Redeeming it weekly resets that clock with ~12x margin, so even a
+  # long runner outage or a holiday freeze cannot reach 90 days.
+  # Minute 17 deliberately: GitHub throttles jobs queued on the hour.
+  schedule:
+    - cron: "17 4 * * 1"
+  # So a human can verify a freshly installed credential immediately
+  # instead of waiting for Monday.
+  workflow_dispatch:
 
 jobs:
   lint:
@@ -77,7 +89,18 @@ jobs:
     # secret isn't available (e.g., on PRs from forks where secrets
     # aren't passed) so external contributions aren't blocked on
     # something they can't provide.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    #
+    # `schedule` and `workflow_dispatch` must be named explicitly. On
+    # those events `github.event.pull_request` is null, so the fork
+    # check alone evaluates false and the job would be skipped — which
+    # would silently defeat the whole keep-alive (#89). The fork-safety
+    # half is unchanged: a pull_request event still only qualifies when
+    # the head repo is this repo.
+    if: >-
+      github.event_name == 'push'
+      || github.event_name == 'schedule'
+      || github.event_name == 'workflow_dispatch'
+      || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v7
 
@@ -93,29 +116,54 @@ jobs:
         run: uv sync --extra dev
 
       - name: Restore harness token cache from secret (work/school)
+        id: restore_work
         env:
           TOKEN_B64: ${{ secrets.OUTLOOK_HARNESS_TOKEN_JSON }}
         run: |
           if [ -z "$TOKEN_B64" ]; then
-            echo "::warning::OUTLOOK_HARNESS_TOKEN_JSON not set — work/school harness tests will be skipped."
+            echo "::notice::OUTLOOK_HARNESS_TOKEN_JSON not set — work/school harness tests will be skipped."
+            echo "present=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           mkdir -p ~/.cache/outlook-mcp/harness
           printf '%s' "$TOKEN_B64" | base64 -d > ~/.cache/outlook-mcp/harness/token.json
           chmod 600 ~/.cache/outlook-mcp/harness/token.json
+          echo "present=true" >> "$GITHUB_OUTPUT"
           echo "Work/school harness token cache restored ($(wc -c < ~/.cache/outlook-mcp/harness/token.json) bytes)."
 
+      # A configured-but-dead credential must fail the job with ONE
+      # legible message. Without this the first test to call get_token()
+      # trips RefreshTokenInvalidError, which deletes the cache entry by
+      # design — and every later test then skips with "Harness token
+      # cache missing", so one dead credential reads as two failures
+      # plus ten skips. See #89.
+      #
+      # Every profile that was actually restored is checked, not just
+      # the work/school one: the personal credential expires by the
+      # same 90-day rule and would otherwise die the same quiet death.
+      - name: Check the harness credentials are alive
+        if: steps.restore_work.outputs.present == 'true' || steps.restore_personal.outputs.present == 'true'
+        env:
+          OUTLOOK_TOKEN_STORE: file
+          # Empty slots and stray separators are filtered by the script,
+          # so "harness," and ",harness-personal" are both fine.
+          HARNESS_PROFILES: ${{ format('{0},{1}', steps.restore_work.outputs.present == 'true' && 'harness' || '', steps.restore_personal.outputs.present == 'true' && 'harness-personal' || '') }}
+        run: uv run python scripts/harness_preflight.py
+
       - name: Restore harness-personal token cache from secret
+        id: restore_personal
         env:
           TOKEN_B64: ${{ secrets.OUTLOOK_HARNESS_PERSONAL_TOKEN_JSON }}
         run: |
           if [ -z "$TOKEN_B64" ]; then
             echo "::notice::OUTLOOK_HARNESS_PERSONAL_TOKEN_JSON not set — personal-account harness tests will be skipped."
+            echo "present=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           mkdir -p ~/.cache/outlook-mcp/harness-personal
           printf '%s' "$TOKEN_B64" | base64 -d > ~/.cache/outlook-mcp/harness-personal/token.json
           chmod 600 ~/.cache/outlook-mcp/harness-personal/token.json
+          echo "present=true" >> "$GITHUB_OUTPUT"
           echo "Personal harness token cache restored ($(wc -c < ~/.cache/outlook-mcp/harness-personal/token.json) bytes)."
 
       - name: Run harness tests against real Microsoft 365
