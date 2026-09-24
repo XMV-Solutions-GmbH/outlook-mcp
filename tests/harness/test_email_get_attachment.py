@@ -31,6 +31,11 @@ from outlook_mcp.auth.store import PlainFileTokenStore
 from outlook_mcp.tools._attachments import upload_attachment
 from outlook_mcp.tools._common import GRAPH_BASE, auth_headers, mailbox_path
 from outlook_mcp.tools.email_get_attachment import get_attachment
+from tests.harness._guard import (
+    assert_shared_mailbox_is_not_the_signed_in_one,
+    guarded_delete,
+    register_created,
+)
 
 HARNESS_PROFILE = "harness"
 SHARED_MAILBOX_ENV = "OUTLOOK_HARNESS_SHARED_MAILBOX_UPN"
@@ -83,7 +88,10 @@ def _create_throwaway_draft(
         },
     )
     response.raise_for_status()
-    return str(response.json()["id"])
+    message_id = str(response.json()["id"])
+    # The ledger half of the ownership proof — see tests/harness/_guard.py.
+    register_created(message_id)
+    return message_id
 
 
 def _delete_draft(
@@ -92,9 +100,11 @@ def _delete_draft(
     message_id: str,
     mailbox: str | None = None,
 ) -> None:
-    box = mailbox_path(mailbox)
+    """Best-effort cleanup. Refuses anything the harness did not create
+    (tests/harness/_guard.py) — and that refusal is an AssertionError,
+    so it is deliberately NOT swallowed by the except below."""
     try:
-        client.delete(f"{GRAPH_BASE}/{box}/messages/{message_id}", headers=headers)
+        guarded_delete(client, headers, message_id, mailbox=mailbox)
     except httpx.HTTPError:
         pass
 
@@ -238,6 +248,9 @@ def test_get_attachment_unknown_id_404(tmp_path: Path) -> None:
 
 def _shared_mailbox_or_skip() -> Iterator[str]:
     upn = os.environ.get(SHARED_MAILBOX_ENV)
+    if upn:
+        # Refuse an obviously wrong target before creating anything.
+        assert_shared_mailbox_is_not_the_signed_in_one(_token(), upn)
     if not upn:
         pytest.skip(
             f"{SHARED_MAILBOX_ENV} not set — skipping shared-mailbox harness tests. "
