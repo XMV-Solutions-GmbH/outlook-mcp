@@ -23,7 +23,10 @@ def _jwt(claims: dict[str, object]) -> str:
         raw = json.dumps(obj).encode()
         return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
-    return f"{seg({'alg': 'none'})}.{seg(claims)}.signature-not-verified"
+    # The signature segment must still be canonical base64url: PyJWT >= 2.15
+    # rejects malformed padding even with signature verification switched off.
+    signature = base64.urlsafe_b64encode(b"signature-not-verified").decode().rstrip("=")
+    return f"{seg({'alg': 'none'})}.{seg(claims)}.{signature}"
 
 
 def test_upn_claim_is_preferred() -> None:
